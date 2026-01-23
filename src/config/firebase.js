@@ -1,16 +1,21 @@
 const admin = require("firebase-admin");
-const path = require("path");
+
+require("dotenv").config();
+
 
 console.log("🔥 Loading Firebase config...");
 
-const serviceAccount = require(path.join(__dirname, "../../serviceAccountKey.json"));
-
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+  credential: admin.credential.cert({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+  }),
 });
 
 const db = admin.firestore();
 db.settings({ ignoreUndefinedProperties: true });
-console.log("✅ Firebase initialized, db created");
 
-module.exports = { admin, db };  // ✅ export BOTH admin and db
+console.log("✅ Firebase initialized successfully");
+
+module.exports = { admin, db };
