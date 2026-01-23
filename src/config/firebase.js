@@ -1,9 +1,13 @@
 const admin = require("firebase-admin");
 
-require("dotenv").config();
-
-
 console.log("🔥 Loading Firebase config...");
+
+if (!process.env.FIREBASE_PROJECT_ID ||
+    !process.env.FIREBASE_CLIENT_EMAIL ||
+    !process.env.FIREBASE_PRIVATE_KEY
+) {
+    throw new Error("Firebase environment variables missing!");
+}
 
 admin.initializeApp({
   credential: admin.credential.cert({
