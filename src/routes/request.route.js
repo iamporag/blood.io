@@ -33,13 +33,13 @@ router.post("/create", authMiddleware, async (req, res) => {
 
 
         res.json({
-            success: true,
             message: "Blood request created successfully",
+            result: null,
         });
     } catch (error) {
         res.status(500).json({
-            success: false,
             message: error.message,
+            result: null,
         });
     }
 });
@@ -69,14 +69,14 @@ router.get("/list", async (req, res) => {
     }));
 
     res.json({
-      success: true,
       total: data.length,
-      data,
+      message: "Blood requests fetched successfully",
+      result: data,
     });
   } catch (error) {
     res.status(500).json({
-      success: false,
       message: error.message,
+      result: null,
     });
   }
 });

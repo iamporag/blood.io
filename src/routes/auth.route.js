@@ -13,13 +13,13 @@ router.post("/register", async (req, res) => {
     const { email, password, name, age, bloodGroup, district, lastDonationDate, phone } = req.body;
 
     if (!email || !password || !name) {
-      return res.status(400).json({ success: false, message: "Email, password, and name are required" });
+      return res.status(400).json({ message: "Email, password, and name are required", result: null });
     }
 
     // Check if user already exists
     try {
       await admin.auth().getUserByEmail(email);
-      return res.status(400).json({ success: false, message: "User already exists" });
+      return res.status(400).json({ message: "User already exists", result: null });
     } catch (_) {
       // user does not exist → OK
     }
@@ -49,13 +49,12 @@ router.post("/register", async (req, res) => {
     await db.collection("users").doc(userRecord.uid).set(profile);
 
     res.json({
-      success: true,
       message: "Registration successful. Waiting for admin approval",
-      body: profile,
+      result: profile,
     });
   } catch (error) {
     console.error("🔥 Registration Error:", error);
-    res.status(500).json({ success: false, message: "Failed to register user" });
+    res.status(500).json({ message: "Failed to register user", result: null });
   }
 });
 
@@ -63,30 +62,94 @@ router.post("/register", async (req, res) => {
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    // 1️⃣ BASIC VALIDATION
     if (!email || !password) {
-      return res.status(400).json({ success: false, message: "Email and password required" });
+      return res.status(400).json({
+        message: "Email and password are required",
+      });
     }
 
-    // Use Firebase REST API to get ID token
-    const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.FIREBASE_API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, returnSecureToken: true })
-    });
+    // 2️⃣ CHECK USER EXISTS (ADMIN SDK)
+    let userRecord;
+    try {
+      userRecord = await admin.auth().getUserByEmail(email);
+    } catch (err) {
+      return res.status(404).json({
+        message: "User not registered",
+      });
+    }
+
+    // 3️⃣ FIREBASE AUTH LOGIN
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.FIREBASE_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          password,
+          returnSecureToken: true,
+        }),
+      }
+    );
 
     const data = await response.json();
 
+    // 4️⃣ AUTH ERRORS (SECURE HANDLING)
     if (data.error) {
-      return res.status(401).json({ success: false, message: data.error.message });
+      return res.status(401).json({
+        message: "Invalid password",
+      });
     }
 
-    // data.idToken is what /login expects
-    res.json({ success: true, idToken: data.idToken });
+
+    const uid = userRecord.uid;
+
+    // 5️⃣ CHECK FIRESTORE USER
+    const userDoc = await db.collection("users").doc(uid).get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        message: "User data not found",
+      });
+    }
+
+    if (userDoc.data().status !== "approved") {
+      return res.status(403).json({
+        message: "Account not approved",
+      });
+    }
+
+    // 6️⃣ CREATE 7-DAY SESSION COOKIE
+    const expiresIn = 7 * 24 * 60 * 60 * 1000;
+
+    const sessionCookie = await admin
+      .auth()
+      .createSessionCookie(data.idToken, { expiresIn });
+
+    // 7️⃣ SUCCESS RESPONSE
+    res.json({
+      message: "Login successful",
+      result: {
+        access_token: sessionCookie,
+        expires_in: expiresIn,
+        user: {
+          uid,
+          ...userDoc.data(),
+        },
+      },
+    });
+
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: "Login failed" });
+    console.error("LOGIN ERROR:", error);
+    res.status(500).json({
+      message: "Login failed",
+    });
   }
 });
+
+
 
 
 // ------------------ GET LOGGED-IN USER ------------------
@@ -99,10 +162,13 @@ router.get("/me", authMiddleware, async (req, res) => {
       return res.status(403).json({ success: false, message: "Account not approved by admin" });
     }
 
-    res.json({ success: true, message: "User fetched", body: userDoc.data() });
+    res.json({
+      message: "Profile fetched successfully",
+      result: { uid, ...userDoc.data() }
+    });
   } catch (error) {
-    console.error("🔥 Get Me Error:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch user" });
+    console.error("🔥 Profile Error:", error);
+    res.status(500).json({ message: "Failed to fetch Profile", result: res.body });
   }
 });
 
