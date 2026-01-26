@@ -20,14 +20,14 @@ router.get("/", authMiddleware, async (req, res) => {
 
         res.json({
             message: "Donors fetched successfully",
-            body: donors,
+            result: donors,
         });
     }
     catch (error) {
         console.error("🔥 Donor List Error:", error);
         res.status(500).json({
             message: "Failed to fetch donors",
-            body: null,
+            result: null,
         });
     }
 });
@@ -58,11 +58,11 @@ router.get("/search", authMiddleware, async (req, res) => {
         res.json({
             total: donors.length,
             message: "Donors fetched successfully",
-            body: donors,
+            result: donors,
         });
     } catch (error) {
         console.error("🔥 Donor Search Error:", error);
-        res.status(500).json({ message: "Failed to fetch donors", body: null });
+        res.status(500).json({ message: "Failed to fetch donors", result: null });
     }
 });
 

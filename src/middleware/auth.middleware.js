@@ -2,28 +2,24 @@ const { admin } = require("../config/firebase"); // now admin is defined
 
 const authMiddleware = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
+    const token = req.headers.authorization?.split(" ")[1];
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({
-        success: false,
-        message: "No token provided",
-      });
+    if (!token) {
+      return res.status(401).json({ message: "No token provided" });
     }
 
-    const token = authHeader.split(" ")[1];
+    // 🔥 VERIFY SESSION COOKIE (NOT idToken)
+    const decoded = await admin.auth().verifySessionCookie(token, true);
 
-    const decodedToken = await admin.auth().verifyIdToken(token);
-    req.user = decodedToken; // uid, phone_number
-
+    req.user = decoded;
     next();
+
   } catch (error) {
-    console.error("🔥 Auth middleware error:", error);
     return res.status(401).json({
-      success: false,
-      message: "Invalid or expired token",
+      message: "Session expired or invalid"
     });
   }
 };
+
 
 module.exports = authMiddleware;
