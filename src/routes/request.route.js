@@ -3,16 +3,27 @@ const router = express.Router();
 const authMiddleware = require("../middleware/auth.middleware");
 const { db } = require("../config/firebase");
 const admin = require("firebase-admin");
+
+// ------------------ Helper ------------------
 function sanitizeTopic(str) {
   return str.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
 }
 
+// ------------------ CREATE BLOOD REQUEST ------------------
 router.post("/create", authMiddleware, async (req, res) => {
   try {
     const uid = req.user.uid;
     const { patientName, bloodGroup, district, hospital, contact, note } = req.body;
 
-    // Save request
+    // 1️⃣ Validate required fields
+    if (!patientName || !bloodGroup || !district || !hospital) {
+      return res.status(400).json({
+        message: "Required fields are missing",
+        result: null,
+      });
+    }
+
+    // 2️⃣ Save blood request to Firestore
     await db.collection("blood_requests").add({
       patientName,
       bloodGroup,
@@ -20,68 +31,35 @@ router.post("/create", authMiddleware, async (req, res) => {
       district,
       districtLower: district.toLowerCase(),
       hospital,
-      contact,
-      note,
+      contact: contact || null,
+      note: note || null,
       createdBy: uid,
       createdAt: new Date(),
     });
 
-    // Sanitize topic
-    const topic = `blood_${sanitizeTopic(bloodGroup)}_${sanitizeTopic(district)}`;
-
-    const message = {
+    // 3️⃣ Send FCM notification to ALL users via topic
+    await admin.messaging().send({
+      topic: "all_users",
       notification: {
-        title: "🩸 Blood Needed Urgently",
+        title: "🩸 Urgent Blood Needed",
         body: `${bloodGroup} blood needed at ${hospital}, ${district}`,
       },
       data: {
+        type: "blood_request",
         bloodGroup,
         district,
-        patientName,
+        hospital,
       },
-      topic: topic,
-    };
-
-    await admin.messaging().send(message);
-
-    res.json({ message: "Blood request created successfully", result: null });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: error.message, result: null });
-  }
-});
-
-
-router.get("/list", async (req, res) => {
-  try {
-    let { district, bloodGroup } = req.query;
-
-    let query = db.collection("blood_requests");
-
-    if (district) {
-      query = query.where("district", "==", district.toLowerCase());
-    }
-
-    if (bloodGroup) {
-      bloodGroup = bloodGroup.replace(/ /g, "+").toLowerCase();
-      query = query.where("bloodGroup", "==", bloodGroup);
-    }
-
-    const snapshot = await query
-      .orderBy("createdAt", "desc")
-      .get();
-
-    const data = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    res.json({
-      total: data.length,
-      message: "Blood requests fetched successfully",
-      result: data,
     });
+
+    // 4️⃣ Success response
+    res.json({
+      message: "Blood request created and notification sent successfully",
+      result: null,
+    });
+
   } catch (error) {
+    console.error("🔥 Error in /create:", error);
     res.status(500).json({
       message: error.message,
       result: null,
@@ -89,5 +67,30 @@ router.get("/list", async (req, res) => {
   }
 });
 
+
+// ------------------ LIST BLOOD REQUESTS ------------------
+router.get("/list", async (req, res) => {
+  try {
+    let { district, bloodGroup } = req.query;
+
+    let query = db.collection("blood_requests");
+
+    if (district) {
+      query = query.where("districtLower", "==", district.toLowerCase());
+    }
+
+    if (bloodGroup) {
+      query = query.where("bloodGroupLower", "==", bloodGroup.toLowerCase());
+    }
+
+    const snapshot = await query.orderBy("createdAt", "desc").get();
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    res.json({ total: data.length, message: "Blood requests fetched successfully", result: data });
+  } catch (error) {
+    console.error("🔥 Error in /list:", error);
+    res.status(500).json({ message: error.message, result: null });
+  }
+});
 
 module.exports = router;
