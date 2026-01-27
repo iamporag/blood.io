@@ -61,7 +61,7 @@ router.post("/register", async (req, res) => {
 // ------------------ LOGIN ------------------
 router.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, deviceToken } = req.body; // <-- add deviceToken
 
     // 1️⃣ BASIC VALIDATION
     if (!email || !password) {
@@ -103,11 +103,11 @@ router.post("/login", async (req, res) => {
       });
     }
 
-
     const uid = userRecord.uid;
 
     // 5️⃣ CHECK FIRESTORE USER
-    const userDoc = await db.collection("users").doc(uid).get();
+    const userDocRef = db.collection("users").doc(uid);
+    const userDoc = await userDocRef.get();
 
     if (!userDoc.exists) {
       return res.status(404).json({
@@ -121,14 +121,22 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // 6️⃣ CREATE 7-DAY SESSION COOKIE
+    // 6️⃣ SAVE DEVICE TOKEN (if provided)
+    if (deviceToken) {
+      await userDocRef.update({
+        deviceToken: deviceToken,
+        updatedAt: new Date(),
+      });
+    }
+
+    // 7️⃣ CREATE 7-DAY SESSION COOKIE
     const expiresIn = 7 * 24 * 60 * 60 * 1000;
 
     const sessionCookie = await admin
       .auth()
       .createSessionCookie(data.idToken, { expiresIn });
 
-    // 7️⃣ SUCCESS RESPONSE
+    // 8️⃣ SUCCESS RESPONSE
     res.json({
       message: "Login successful",
       result: {
@@ -137,6 +145,7 @@ router.post("/login", async (req, res) => {
         user: {
           uid,
           ...userDoc.data(),
+          deviceToken: deviceToken || userDoc.data().deviceToken || null,
         },
       },
     });
@@ -148,6 +157,7 @@ router.post("/login", async (req, res) => {
     });
   }
 });
+
 
 
 
