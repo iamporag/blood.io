@@ -15,7 +15,7 @@ router.post("/create", authMiddleware, async (req, res) => {
     const uid = req.user.uid;
     const { patientName, bloodGroup, district, hospital, contact, note } = req.body;
 
-    // 1️⃣ Validate required fields
+    // Validate required fields
     if (!patientName || !bloodGroup || !district || !hospital) {
       return res.status(400).json({
         message: "Required fields are missing",
@@ -23,7 +23,7 @@ router.post("/create", authMiddleware, async (req, res) => {
       });
     }
 
-    // 2️⃣ Save blood request to Firestore
+    // Save blood request
     await db.collection("blood_requests").add({
       patientName,
       bloodGroup,
@@ -37,8 +37,10 @@ router.post("/create", authMiddleware, async (req, res) => {
       createdAt: new Date(),
     });
 
-    // 3️⃣ Send FCM notification to ALL users via topic
-    await admin.messaging().send({
+    console.log("🚀 Sending notification to topic: all_users");
+
+    // SEND NOTIFICATION (IMPORTANT FIX HERE)
+    const response = await admin.messaging().send({
       topic: "all_users",
       notification: {
         title: "🩸 Urgent Blood Needed",
@@ -52,7 +54,8 @@ router.post("/create", authMiddleware, async (req, res) => {
       },
     });
 
-    // 4️⃣ Success response
+    console.log("✅ FCM RESPONSE:", response);
+
     res.json({
       message: "Blood request created and notification sent successfully",
       result: null,
@@ -66,6 +69,7 @@ router.post("/create", authMiddleware, async (req, res) => {
     });
   }
 });
+
 
 
 // ------------------ LIST BLOOD REQUESTS ------------------
