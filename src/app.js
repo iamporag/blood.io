@@ -4,6 +4,7 @@ const cors = require("cors");
 const authRoute = require("./routes/auth.route");
 const donorRoute = require("./routes/donor.route");
 const requestRoute = require("./routes/request.route");
+const notificationRoute = require("./routes/notification.route");
 
 const app = express();
 
@@ -13,6 +14,7 @@ app.use(express.json());
 app.use("/api/auth", authRoute);
 app.use("/api/v1/donor", donorRoute);
 app.use("/api/v1/request", requestRoute);
+app.use("/api/v1/notification", notificationRoute);
 
 
 app.get("/", (req, res) => {

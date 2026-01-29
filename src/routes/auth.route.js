@@ -43,7 +43,7 @@ router.post("/register", async (req, res) => {
       lastDonationDate: lastDonationDate || null,
       status: "pending", // must be approved by admin
       isDoner: false,
-      createdAt: new Date(),
+      createdAt: new Date().toISOString(),
     };
 
     await db.collection("users").doc(userRecord.uid).set(profile);
