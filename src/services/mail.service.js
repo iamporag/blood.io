@@ -1,31 +1,25 @@
+// src/services/mail.service.js
 const nodemailer = require("nodemailer");
 
 const transporter = nodemailer.createTransport({
-  host: process.env.MAIL_HOST,
-  port: parseInt(process.env.MAIL_PORT),
-  secure: false,
+  host: "smtp.sendgrid.net",
+  port: 587,
   auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,
+    user: "apikey", // fixed
+    pass: process.env.SENDGRID_API_KEY,
   },
-   tls: {
-    rejectUnauthorized: false,
-  },
-  
 });
 
 async function sendVerificationEmail(email, code) {
   try {
     await transporter.sendMail({
-      from: `"Blood Bridge" <${process.env.MAIL_FROM}>`,
+      from: `"Blood Bridge" <no-reply@yourdomain.com>`,
       to: email,
       subject: "Verify Your Email",
-      html: `
-        <h3>Email Verification</h3>
-        <p>Your verification code is:</p>
-        <h2>${code}</h2>
-        <p>This code will expire in 10 minutes.</p>
-      `,
+      html: `<h3>Email Verification</h3>
+             <p>Your verification code is:</p>
+             <h2>${code}</h2>
+             <p>This code will expire in 10 minutes.</p>`,
     });
     console.log(`OTP email sent to ${email}`);
   } catch (err) {
