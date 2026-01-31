@@ -29,3 +29,5 @@ async function sendVerificationEmail(email, code) {
     throw err;
   }
 }
+
+module.exports = { sendVerificationEmail };
