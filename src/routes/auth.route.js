@@ -69,7 +69,13 @@ router.post("/register", async (req, res) => {
 
     await db.collection("users").doc(userRecord.uid).set(profile);
     // TODO: Send email here
-    sendVerificationEmail(email, verificationCode);
+    try {
+      await sendVerificationEmail(email, verificationCode);
+      console.log(`Verification email sent to ${email}`);
+    } catch (err) {
+      console.error("Failed to send email:", err);
+    }
+
 
     res.json({
       message: "Registration successful. Verification code sent to email",
