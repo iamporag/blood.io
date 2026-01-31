@@ -142,16 +142,19 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    if (
-      userDoc.data().status !== "active" &&
-      userDoc.data().emailVerified === false
-    ) {
-      return res.status(403).json({
-        message: "Please verify your email to activate your account",
-      });
+if (
+  userDoc.data().status !== "active" &&
+  userRecord.emailVerified === false // ✅ use userRecord here
+) {
+  return res.status(403).json({
+    message: "Please verify your email to activate your account",
+    result: {
+      uid: userRecord.uid,  
+      emailVerified: userRecord.emailVerified, 
+    },
+  });
+}
 
-
-    }
 
     // 6️⃣ SAVE DEVICE TOKEN (if provided)
     if (deviceToken) {
