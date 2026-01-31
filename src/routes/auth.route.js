@@ -6,14 +6,33 @@ const { db } = require("../config/firebase");
 require("dotenv").config();
 
 const authMiddleware = require("../middleware/auth.middleware");
+const { sendVerificationEmail } = require("../services/mail.service");
+
+
+function generateOTP() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
 
 // ------------------ REGISTER ------------------
 router.post("/register", async (req, res) => {
   try {
-    const { email, password, name, age, bloodGroup, district, lastDonationDate, phone } = req.body;
+    const { name, email, password, confirm_password, } = req.body;
 
-    if (!email || !password || !name) {
-      return res.status(400).json({ message: "Email, password, and name are required", result: null });
+    if (!name) {
+      return res.status(400).json({ message: "Name are required", result: null });
+    }
+    if (!email) {
+      return res.status(400).json({ message: "Email are required", result: null });
+    }
+    if (!password) {
+      return res.status(400).json({ message: "Password are required", result: null });
+    }
+    if (!confirm_password) {
+      return res.status(400).json({ message: "Confirm password are required", result: null });
+    }
+    if (password !== confirm_password) {
+      return res.status(400).json({ message: "Passwords do not match", result: null });
     }
 
     // Check if user already exists
@@ -29,28 +48,36 @@ router.post("/register", async (req, res) => {
       email,
       password,
       displayName: name,
-      phoneNumber: phone || undefined,
+      emailVerified: false,
     });
+
+    // Generate OTP
+    const verificationCode = generateOTP();
 
     // Create Firestore profile with pending status
     const profile = {
       name,
       email,
-      phone: phone || null,
-      age: age || null,
-      bloodGroup: bloodGroup || null,
-      district: district || null,
-      lastDonationDate: lastDonationDate || null,
       status: "pending", // must be approved by admin
       isDoner: false,
+      emailVerified: false,
+      verificationCode,
+      codeExpiresAt: Date.now() + 10 * 60 * 1000,
+      lastOtpSentAt: Date.now(),
       createdAt: new Date().toISOString(),
     };
 
     await db.collection("users").doc(userRecord.uid).set(profile);
+    // TODO: Send email here
+    sendVerificationEmail(email, verificationCode);
 
     res.json({
-      message: "Registration successful. Waiting for admin approval",
-      result: profile,
+      message: "Registration successful. Verification code sent to email",
+      result: {
+        uid: userRecord.uid,
+        email,
+        emailVerified: false,
+      },
     });
   } catch (error) {
     console.error("🔥 Registration Error:", error);
@@ -61,7 +88,7 @@ router.post("/register", async (req, res) => {
 // ------------------ LOGIN ------------------
 router.post("/login", async (req, res) => {
   try {
-    const { email, password, deviceToken } = req.body; // <-- add deviceToken
+    const { email, password, deviceToken } = req.body;
 
     // 1️⃣ BASIC VALIDATION
     if (!email || !password) {
@@ -115,10 +142,15 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    if (userDoc.data().status !== "approved") {
+    if (
+      userDoc.data().status !== "active" &&
+      userDoc.data().emailVerified === false
+    ) {
       return res.status(403).json({
-        message: "Account not approved",
+        message: "Please verify your email to activate your account",
       });
+
+
     }
 
     // 6️⃣ SAVE DEVICE TOKEN (if provided)
@@ -181,5 +213,137 @@ router.get("/me", authMiddleware, async (req, res) => {
     res.status(500).json({ message: "Failed to fetch Profile", result: res.body });
   }
 });
+
+
+router.post("/resend-otp", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        message: "Email is required",
+      });
+    }
+
+    // Find user in Firebase Auth
+    let userRecord;
+    try {
+      userRecord = await admin.auth().getUserByEmail(email);
+    } catch (_) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const userRef = db.collection("users").doc(userRecord.uid);
+    const userSnap = await userRef.get();
+
+    if (!userSnap.exists) {
+      return res.status(404).json({
+        message: "User profile not found",
+      });
+    }
+
+    const user = userSnap.data();
+
+    // Already verified?
+    if (user.emailVerified) {
+      return res.status(400).json({
+        message: "Email already verified",
+      });
+    }
+
+    // ⏱️ COOLDOWN (60 sec)
+    const now = Date.now();
+    if (user.lastOtpSentAt && now - user.lastOtpSentAt < 60 * 1000) {
+      const waitTime = Math.ceil((60 * 1000 - (now - user.lastOtpSentAt)) / 1000);
+      return res.status(429).json({
+        message: `Please wait ${waitTime} seconds before requesting a new code`,
+      });
+    }
+
+    // 🔢 Generate new OTP
+    const newOtp = generateOTP();
+
+    // 🔄 Update Firestore
+    await userRef.update({
+      verificationCode: newOtp,
+      codeExpiresAt: now + 10 * 60 * 1000,
+      lastOtpSentAt: now,
+    });
+
+    // 📩 Send email
+    await sendVerificationEmail(user.email, newOtp);
+
+    res.json({
+      message: "A new verification code has been sent to your email",
+    });
+
+  } catch (error) {
+    console.error("🔥 Resend OTP Error:", error);
+    res.status(500).json({
+      message: "Failed to resend verification code",
+    });
+  }
+});
+
+
+
+// Registration successful. Waiting for admin approval
+router.post("/verify-email", async (req, res) => {
+  try {
+    const { uid, code } = req.body;
+
+    if (!uid || !code) {
+      return res.status(400).json({ message: "UID and code required", result: null });
+    }
+
+    const userRef = db.collection("users").doc(uid);
+    const userSnap = await userRef.get();
+
+    if (!userSnap.exists) {
+      return res.status(404).json({ message: "User not found", result: null });
+    }
+
+    const user = userSnap.data();
+        // ✅ Check if already verified
+    if (user.emailVerified) {
+      return res.status(400).json({
+        message: "Email already verified",
+        result: null
+      });
+    }
+
+
+    if (user.verificationCode !== code) {
+      return res.status(400).json({ message: "Invalid verification code", result: null });
+    }
+
+    if (Date.now() > user.codeExpiresAt) {
+      return res.status(400).json({ message: "Verification code expired", result: null });
+    }
+    // Mark verified
+    await admin.auth().updateUser(uid, {
+      emailVerified: true,
+    });
+
+    await userRef.update({
+      emailVerified: true,
+      status: "active",
+      verificationCode: admin.firestore.FieldValue.delete(),
+      codeExpiresAt: admin.firestore.FieldValue.delete(),
+      lastOtpSentAt: admin.firestore.FieldValue.delete(),
+    });
+
+    res.json({
+      message: "Email verified successfully",
+      result: null,
+    });
+  } catch (error) {
+    console.error("🔥 Verify Email Error:", error);
+    res.status(500).json({ message: "Failed to verify email", result: null });
+  }
+});
+
 
 module.exports = router;
