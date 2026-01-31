@@ -142,18 +142,18 @@ router.post("/login", async (req, res) => {
       });
     }
 
-if (
-  userDoc.data().status !== "active" &&
-  userRecord.emailVerified === false // ✅ use userRecord here
-) {
-  return res.status(403).json({
-    message: "Please verify your email to activate your account",
-    result: {
-      uid: userRecord.uid,  
-      emailVerified: userRecord.emailVerified, 
-    },
-  });
-}
+    if (
+      userDoc.data().status !== "active" &&
+      userRecord.emailVerified === false // ✅ use userRecord here
+    ) {
+      return res.status(403).json({
+        message: "Please verify your email to activate your account",
+        result: {
+          uid: userRecord.uid,
+          emailVerified: userRecord.emailVerified,
+        },
+      });
+    }
 
 
     // 6️⃣ SAVE DEVICE TOKEN (if provided)
@@ -309,7 +309,7 @@ router.post("/verify-email", async (req, res) => {
     }
 
     const user = userSnap.data();
-        // ✅ Check if already verified
+    // ✅ Check if already verified
     if (user.emailVerified) {
       return res.status(400).json({
         message: "Email already verified",
