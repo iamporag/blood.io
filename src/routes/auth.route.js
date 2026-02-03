@@ -10,69 +10,28 @@ const authMiddleware = require("../middleware/auth.middleware");
 // ------------------ REGISTER ------------------
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, confirm_password } = req.body;
+    const { uid, name, email } = req.body;
 
-    // ✅ YOUR VALIDATION STYLE (UNCHANGED)
-    if (!name) {
-      return res.status(400).json({ message: "Name are required", result: null });
-    }
-    if (!email) {
-      return res.status(400).json({ message: "Email are required", result: null });
-    }
-    if (!password) {
-      return res.status(400).json({ message: "Password are required", result: null });
-    }
-    if (!confirm_password) {
-      return res.status(400).json({ message: "Confirm password are required", result: null });
-    }
-    if (password !== confirm_password) {
-      return res.status(400).json({ message: "Passwords do not match", result: null });
+    if (!uid || !email) {
+      return res.status(400).json({ message: "Invalid data" });
     }
 
-    // ✅ Check if user already exists
-    try {
-      await admin.auth().getUserByEmail(email);
-      return res.status(400).json({
-        message: "User already exists",
-        result: null,
-      });
-    } catch (_) { }
-
-    // ✅ Create Firebase Auth user
-    const userRecord = await admin.auth().createUser({
-      email,
-      password,
-      displayName: name,
-      emailVerified: false,
-    });
-
-    // ✅ Firestore profile (NO OTP)
-    await db.collection("users").doc(userRecord.uid).set({
+    await db.collection("users").doc(uid).set({
       name,
       email,
-      status: "pending", // admin approval later
-      isDoner: false,
       emailVerified: false,
+      status: "pending",
       createdAt: new Date().toISOString(),
     });
 
-    return res.json({
-      message:
-        "Registration successful. Please verify your email before login.",
-      result: {
-        uid: userRecord.uid,
-        email,
-        emailVerified: false,
-      },
+    res.json({
+      message: "User profile saved",
     });
   } catch (error) {
-    console.error("🔥 Registration Error:", error);
-    res.status(500).json({
-      message: "Failed to register user",
-      result: null,
-    });
+    res.status(500).json({ message: "Failed to save user" });
   }
 });
+
 
 
 // ------------------ LOGIN ------------------
@@ -87,17 +46,17 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    // 2️⃣ CHECK USER EXISTS (ADMIN SDK)
+    // 2️⃣ CHECK USER EXISTS
     let userRecord;
     try {
       userRecord = await admin.auth().getUserByEmail(email);
-    } catch (err) {
+    } catch (_) {
       return res.status(404).json({
         message: "User not registered",
       });
     }
 
-    // 3️⃣ FIREBASE AUTH LOGIN
+    // 3️⃣ LOGIN WITH FIREBASE REST API
     const response = await fetch(
       `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.FIREBASE_API_KEY}`,
       {
@@ -113,55 +72,57 @@ router.post("/login", async (req, res) => {
 
     const data = await response.json();
 
-    // 4️⃣ AUTH ERRORS (SECURE HANDLING)
     if (data.error) {
       return res.status(401).json({
-        message: "Invalid password",
+        message: "Invalid email or password",
       });
     }
 
     const uid = userRecord.uid;
 
-    // 5️⃣ CHECK FIRESTORE USER
+    // 4️⃣ GET FIRESTORE USER
     const userDocRef = db.collection("users").doc(uid);
     const userDoc = await userDocRef.get();
 
     if (!userDoc.exists) {
       return res.status(404).json({
-        message: "User data not found",
+        message: "User profile not found",
       });
     }
 
-    if (
-      userDoc.data().status !== "active" &&
-      userRecord.emailVerified === false // ✅ use userRecord here
-    ) {
+    // 5️⃣ EMAIL VERIFICATION CHECK (🔥 IMPORTANT)
+    if (!userRecord.emailVerified) {
       return res.status(403).json({
-        message: "Please verify your email to activate your account",
+        message: "Please verify your email before login",
         result: {
-          uid: userRecord.uid,
-          emailVerified: userRecord.emailVerified,
+          uid,
+          emailVerified: false,
         },
       });
     }
 
+    // 6️⃣ ADMIN APPROVAL CHECK
+    if (userDoc.data().status !== "active") {
+      return res.status(403).json({
+        message: "Your account is pending admin approval",
+      });
+    }
 
-    // 6️⃣ SAVE DEVICE TOKEN (if provided)
+    // 7️⃣ SAVE DEVICE TOKEN
     if (deviceToken) {
       await userDocRef.update({
-        deviceToken: deviceToken,
+        deviceToken,
         updatedAt: new Date(),
       });
     }
 
-    // 7️⃣ CREATE 7-DAY SESSION COOKIE
+    // 8️⃣ CREATE SESSION COOKIE
     const expiresIn = 7 * 24 * 60 * 60 * 1000;
-
     const sessionCookie = await admin
       .auth()
       .createSessionCookie(data.idToken, { expiresIn });
 
-    // 8️⃣ SUCCESS RESPONSE
+    // 9️⃣ SUCCESS RESPONSE
     res.json({
       message: "Login successful",
       result: {
@@ -170,11 +131,10 @@ router.post("/login", async (req, res) => {
         user: {
           uid,
           ...userDoc.data(),
-          deviceToken: deviceToken || userDoc.data().deviceToken || null,
+          deviceToken: deviceToken || null,
         },
       },
     });
-
   } catch (error) {
     console.error("LOGIN ERROR:", error);
     res.status(500).json({
@@ -182,6 +142,7 @@ router.post("/login", async (req, res) => {
     });
   }
 });
+
 
 
 
@@ -204,137 +165,6 @@ router.get("/me", authMiddleware, async (req, res) => {
   } catch (error) {
     console.error("🔥 Profile Error:", error);
     res.status(500).json({ message: "Failed to fetch Profile", result: res.body });
-  }
-});
-
-
-router.post("/resend-otp", async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({
-        message: "Email is required",
-      });
-    }
-
-    // Find user in Firebase Auth
-    let userRecord;
-    try {
-      userRecord = await admin.auth().getUserByEmail(email);
-    } catch (_) {
-      return res.status(404).json({
-        message: "User not found",
-      });
-    }
-
-    const userRef = db.collection("users").doc(userRecord.uid);
-    const userSnap = await userRef.get();
-
-    if (!userSnap.exists) {
-      return res.status(404).json({
-        message: "User profile not found",
-      });
-    }
-
-    const user = userSnap.data();
-
-    // Already verified?
-    if (user.emailVerified) {
-      return res.status(400).json({
-        message: "Email already verified",
-      });
-    }
-
-    // ⏱️ COOLDOWN (60 sec)
-    const now = Date.now();
-    if (user.lastOtpSentAt && now - user.lastOtpSentAt < 60 * 1000) {
-      const waitTime = Math.ceil((60 * 1000 - (now - user.lastOtpSentAt)) / 1000);
-      return res.status(429).json({
-        message: `Please wait ${waitTime} seconds before requesting a new code`,
-      });
-    }
-
-    // 🔢 Generate new OTP
-    const newOtp = generateOTP();
-
-    // 🔄 Update Firestore
-    await userRef.update({
-      verificationCode: newOtp,
-      codeExpiresAt: now + 10 * 60 * 1000,
-      lastOtpSentAt: now,
-    });
-
-    // 📩 Send email
-    await sendVerificationEmail(user.email, newOtp);
-
-    res.json({
-      message: "A new verification code has been sent to your email",
-    });
-
-  } catch (error) {
-    console.error("🔥 Resend OTP Error:", error);
-    res.status(500).json({
-      message: "Failed to resend verification code",
-    });
-  }
-});
-
-
-
-// Registration successful. Waiting for admin approval
-router.post("/verify-email", async (req, res) => {
-  try {
-    const { uid, code } = req.body;
-
-    if (!uid || !code) {
-      return res.status(400).json({ message: "UID and code required", result: null });
-    }
-
-    const userRef = db.collection("users").doc(uid);
-    const userSnap = await userRef.get();
-
-    if (!userSnap.exists) {
-      return res.status(404).json({ message: "User not found", result: null });
-    }
-
-    const user = userSnap.data();
-    // ✅ Check if already verified
-    if (user.emailVerified) {
-      return res.status(400).json({
-        message: "Email already verified",
-        result: null
-      });
-    }
-
-
-    if (user.verificationCode !== code) {
-      return res.status(400).json({ message: "Invalid verification code", result: null });
-    }
-
-    if (Date.now() > user.codeExpiresAt) {
-      return res.status(400).json({ message: "Verification code expired", result: null });
-    }
-    // Mark verified
-    await admin.auth().updateUser(uid, {
-      emailVerified: true,
-    });
-
-    await userRef.update({
-      emailVerified: true,
-      status: "active",
-      verificationCode: admin.firestore.FieldValue.delete(),
-      codeExpiresAt: admin.firestore.FieldValue.delete(),
-      lastOtpSentAt: admin.firestore.FieldValue.delete(),
-    });
-
-    res.json({
-      message: "Email verified successfully",
-      result: null,
-    });
-  } catch (error) {
-    console.error("🔥 Verify Email Error:", error);
-    res.status(500).json({ message: "Failed to verify email", result: null });
   }
 });
 
