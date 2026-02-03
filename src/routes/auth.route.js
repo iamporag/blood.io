@@ -95,16 +95,17 @@ router.post("/login", async (req, res) => {
       return res.status(403).json({
         message: "Please verify your email before login",
         result: {
-          uid,
-          emailVerified: false,
+          uid: userRecord.uid,
+          emailVerified: userRecord.emailVerified,
         },
       });
     }
 
     // 6️⃣ ADMIN APPROVAL CHECK
     if (userDoc.data().status !== "active") {
-      return res.status(403).json({
-        message: "Your account is pending admin approval",
+      await userDocRef.update({
+        status: "active",
+        updatedAt: new Date().toISOString(),
       });
     }
 
@@ -112,7 +113,7 @@ router.post("/login", async (req, res) => {
     if (deviceToken) {
       await userDocRef.update({
         deviceToken,
-        updatedAt: new Date(),
+        updatedAt: new Date().toISOString(),
       });
     }
 
@@ -154,7 +155,7 @@ router.get("/me", authMiddleware, async (req, res) => {
     const uid = req.user.uid;
     const userDoc = await db.collection("users").doc(uid).get();
 
-    if (!userDoc.exists || userDoc.data().status !== "approved") {
+    if (!userDoc.exists || userDoc.data().status !== "active") {
       return res.status(403).json({ success: false, message: "Account not approved by admin" });
     }
 

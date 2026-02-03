@@ -15,7 +15,7 @@ router.get("/", authMiddleware, async (req, res) => {
 
         let query = db.collection("users")
             .where("isDoner", "==", true)
-            .where("status", "==", "approved")
+            .where("status", "==", "active")
             .orderBy("createdAt", "desc");
 
         // Pagination
