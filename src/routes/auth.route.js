@@ -6,19 +6,13 @@ const { db } = require("../config/firebase");
 require("dotenv").config();
 
 const authMiddleware = require("../middleware/auth.middleware");
-const { sendVerificationEmail } = require("../services/mail.service");
-
-
-function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
 
 // ------------------ REGISTER ------------------
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, confirm_password, } = req.body;
+    const { name, email, password, confirm_password } = req.body;
 
+    // ✅ YOUR VALIDATION STYLE (UNCHANGED)
     if (!name) {
       return res.status(400).json({ message: "Name are required", result: null });
     }
@@ -35,15 +29,16 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ message: "Passwords do not match", result: null });
     }
 
-    // Check if user already exists
+    // ✅ Check if user already exists
     try {
       await admin.auth().getUserByEmail(email);
-      return res.status(400).json({ message: "User already exists", result: null });
-    } catch (_) {
-      // user does not exist → OK
-    }
+      return res.status(400).json({
+        message: "User already exists",
+        result: null,
+      });
+    } catch (_) { }
 
-    // Create user in Firebase Auth
+    // ✅ Create Firebase Auth user
     const userRecord = await admin.auth().createUser({
       email,
       password,
@@ -51,34 +46,19 @@ router.post("/register", async (req, res) => {
       emailVerified: false,
     });
 
-    // Generate OTP
-    const verificationCode = generateOTP();
-
-    // Create Firestore profile with pending status
-    const profile = {
+    // ✅ Firestore profile (NO OTP)
+    await db.collection("users").doc(userRecord.uid).set({
       name,
       email,
-      status: "pending", // must be approved by admin
+      status: "pending", // admin approval later
       isDoner: false,
       emailVerified: false,
-      verificationCode,
-      codeExpiresAt: Date.now() + 10 * 60 * 1000,
-      lastOtpSentAt: Date.now(),
       createdAt: new Date().toISOString(),
-    };
+    });
 
-    await db.collection("users").doc(userRecord.uid).set(profile);
-    // TODO: Send email here
-    try {
-      await sendVerificationEmail(email, verificationCode);
-      console.log(`Verification email sent to ${email}`);
-    } catch (err) {
-      console.error("Failed to send email:", err);
-    }
-
-
-    res.json({
-      message: "Registration successful. Verification code sent to email",
+    return res.json({
+      message:
+        "Registration successful. Please verify your email before login.",
       result: {
         uid: userRecord.uid,
         email,
@@ -87,9 +67,13 @@ router.post("/register", async (req, res) => {
     });
   } catch (error) {
     console.error("🔥 Registration Error:", error);
-    res.status(500).json({ message: "Failed to register user", result: null });
+    res.status(500).json({
+      message: "Failed to register user",
+      result: null,
+    });
   }
 });
+
 
 // ------------------ LOGIN ------------------
 router.post("/login", async (req, res) => {
