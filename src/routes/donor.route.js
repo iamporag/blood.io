@@ -14,7 +14,6 @@ router.get("/", authMiddleware, async (req, res) => {
         const now = new Date();
 
         let query = db.collection("users")
-            .where("isDoner", "==", true)
             .where("status", "==", "active")
             .orderBy("createdAt", "desc");
 

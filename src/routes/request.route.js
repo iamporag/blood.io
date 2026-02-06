@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../middleware/auth.middleware");
+const profileComplete = require("../middleware/profileComplete.middleware");
 const { db } = require("../config/firebase");
 const admin = require("firebase-admin");
 
@@ -11,7 +12,7 @@ function sanitizeTopic(str) {
 
 // ------------------ CREATE BLOOD REQUEST ------------------
 // (UNCHANGED - kept exactly as your original)
-router.post("/", authMiddleware, async (req, res) => {
+router.post("/", authMiddleware, profileComplete, async (req, res) => {
   try {
     const uid = req.user.uid;
 
@@ -314,7 +315,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
 });
 
 // ------------------ BOOK BLOOD REQUEST ------------------
-router.post("/:id/book", authMiddleware, async (req, res) => {
+router.post("/:id/book", authMiddleware, profileComplete, async (req, res) => {
   try {
     const donorUid = req.user.uid;
 
@@ -378,7 +379,7 @@ router.post("/:id/book", authMiddleware, async (req, res) => {
 
 
 // ------------------ COMPLETE BLOOD DONATION (Request Owner Only) ------------------
-router.post("/:id/complete", authMiddleware, async (req, res) => {
+router.post("/:id/complete", authMiddleware, profileComplete, async (req, res) => {
   try {
     const userUid = req.user.uid;
 

@@ -23,6 +23,7 @@ router.post("/register", async (req, res) => {
       name,
       email,
       emailVerified: false,
+      profileComplete: false,
       status: "pending",
       createdAt: new Date().toISOString(),
     });
@@ -43,12 +44,12 @@ router.post("/login", async (req, res) => {
     const { email, password, deviceToken } = req.body;
 
     // 1️⃣ BASIC VALIDATION
-    if (!email ) {
+    if (!email) {
       return res.status(400).json({
         message: "Email are required",
       });
     }
-    if (!password ) {
+    if (!password) {
       return res.status(400).json({
         message: "Password are required",
       });
@@ -278,8 +279,8 @@ router.get("/me/requests", authMiddleware, async (req, res) => {
 
     // Fetch all blood requests created by this user
     let query = db.collection("blood_requests")
-                  .where("createdBy", "==", uid)
-                  .orderBy("createdAt", "desc");
+      .where("createdBy", "==", uid)
+      .orderBy("createdAt", "desc");
 
     const snapshot = await query.get();
     const allDocs = snapshot.docs;
