@@ -17,13 +17,13 @@ router.post("/", authMiddleware, async (req, res) => {
 
     const {
       patientName,
+      medicalCondition,
       bloodGroup,
       unit,
       address,
       hospital,
       contact,
       note,
-      medicalCondition,
       donationDate,
     } = req.body;
 
@@ -59,26 +59,44 @@ router.post("/", authMiddleware, async (req, res) => {
       if (!address.state) {
         errors.push("State is required");
       }
-      if (!address.postalCode) {
-        errors.push("Postal code is required");
-      }
-      if (!address.countryCode) {
-        errors.push("Country code is required");
-      }
     }
 
     // Return validation errors
     if (errors.length > 0) {
       return res.status(400).json({
-        message: "Validation failed",
-        errors,
-        result: null,
+        message: errors,
       });
     }
+
+    // ---------------- CHECK 24 HOUR LIMIT ----------------
+    const lastRequestQuery = await db
+      .collection("blood_requests")
+      .where("createdBy", "==", uid)
+      .orderBy("createdAt", "desc")
+      .limit(1)
+      .get();
+
+    if (!lastRequestQuery.empty) {
+      const lastRequest = lastRequestQuery.docs[0].data();
+      const lastCreatedAt = new Date(lastRequest.createdAt);
+      const now = new Date();
+
+      const diffHours = (now - lastCreatedAt) / (1000 * 60 * 60);
+
+      if (diffHours < 24) {
+        const remainingHours = Math.ceil(24 - diffHours);
+
+        return res.status(400).json({
+          message: `You can create another request after ${remainingHours} hour(s)`,
+        });
+      }
+    }
+
 
     // Save blood request
     const docRef = await db.collection("blood_requests").add({
       patientName: patientName.trim(),
+      medicalCondition: medicalCondition || null,
       bloodGroup,
       unit: unit && unit > 0 ? unit : 1,
       address: {
@@ -86,14 +104,11 @@ router.post("/", authMiddleware, async (req, res) => {
         line2: address.line2 || null,
         city: address.city,
         state: address.state,
-        postalCode: address.postalCode,
-        countryCode: address.countryCode,
       },
       hospital: hospital || null,
       contact: contact.toString(),
       donationDate,
       note: note || null,
-      medicalCondition: medicalCondition || null,
       createdBy: uid,
       createdAt: new Date().toISOString(),
     });
@@ -271,15 +286,16 @@ router.get("/:id", authMiddleware, async (req, res) => {
     const result = {
       id: doc.id,
       patientName: data.patientName,
+      medicalCondition: data.medicalCondition || null,
       bloodGroup: data.bloodGroup,
-      unit:data.unit,
+      unit: data.unit,
       hospital: data.hospital,
-      contact: data.contact || null,
+      contact: contact,
       address: data.address || null,
-      note: data.note || null,
+      note: note,
       status: data.status || "pending",
       donor: donorInfo,
-      donationDate:data.donationDate,
+      donationDate: data.donationDate,
       createdAt: data.createdAt,
       createdBy,
     };
@@ -297,11 +313,24 @@ router.get("/:id", authMiddleware, async (req, res) => {
   }
 });
 
-
 // ------------------ BOOK BLOOD REQUEST ------------------
 router.post("/:id/book", authMiddleware, async (req, res) => {
   try {
     const donorUid = req.user.uid;
+
+    // 🔒 Check if donor already has an active booking
+    const activeBookingQuery = await db
+      .collection("blood_requests")
+      .where("donor.uid", "==", donorUid)
+      .where("status", "==", "booked")
+      .limit(1)
+      .get();
+
+    if (!activeBookingQuery.empty) {
+      return res.status(403).json({
+        message: "You already have an active booked request. Complete it first.",
+      });
+    }
 
     const requestRef = db.collection("blood_requests").doc(req.params.id);
     const requestDoc = await requestRef.get();
@@ -312,14 +341,14 @@ router.post("/:id/book", authMiddleware, async (req, res) => {
 
     const requestData = requestDoc.data();
 
-    // ✅ Prevent the creator from booking their own request
+    // Prevent the creator from booking their own request
     if (requestData.createdBy === donorUid) {
       return res.status(403).json({
         message: "You cannot book your own blood request",
       });
     }
 
-    // ✅ Prevent booking if already booked
+    // Prevent booking if already booked
     if (requestData.donor) {
       return res.status(403).json({
         message: "This request is already booked by another donor",
@@ -346,6 +375,7 @@ router.post("/:id/book", authMiddleware, async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
+
 
 // ------------------ COMPLETE BLOOD DONATION (Request Owner Only) ------------------
 router.post("/:id/complete", authMiddleware, async (req, res) => {
@@ -391,9 +421,5 @@ router.post("/:id/complete", authMiddleware, async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
-
-
-
-
 
 module.exports = router;
