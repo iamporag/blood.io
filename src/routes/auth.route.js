@@ -204,6 +204,8 @@ router.get("/me", authMiddleware, async (req, res) => {
         requestsCount,
         bookedCount,
         completedCount,
+        lastDonatedDate: userData.lastDonatedDate || null,
+        profileComplete:userData.profileComplete,
         address: userData.address || {},
         createdAt: userData.createdAt,
       }
