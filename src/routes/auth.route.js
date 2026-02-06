@@ -12,8 +12,11 @@ router.post("/register", async (req, res) => {
   try {
     const { uid, name, email } = req.body;
 
-    if (!uid || !email) {
-      return res.status(400).json({ message: "Invalid data" });
+    if (!name) {
+      return res.status(400).json({ message: "Name are required" });
+    }
+    if (!email) {
+      return res.status(400).json({ message: "Email are required" });
     }
 
     await db.collection("users").doc(uid).set({
@@ -40,9 +43,14 @@ router.post("/login", async (req, res) => {
     const { email, password, deviceToken } = req.body;
 
     // 1️⃣ BASIC VALIDATION
-    if (!email || !password) {
+    if (!email ) {
       return res.status(400).json({
-        message: "Email and password are required",
+        message: "Email are required",
+      });
+    }
+    if (!password ) {
+      return res.status(400).json({
+        message: "Password are required",
       });
     }
 
@@ -145,29 +153,227 @@ router.post("/login", async (req, res) => {
 });
 
 
-
-
-
-
-// ------------------ GET LOGGED-IN USER ------------------
+// ------------------ GET LOGGED-IN USER PROFILE ------------------
 router.get("/me", authMiddleware, async (req, res) => {
   try {
     const uid = req.user.uid;
     const userDoc = await db.collection("users").doc(uid).get();
 
     if (!userDoc.exists || userDoc.data().status !== "active") {
-      return res.status(403).json({ success: false, message: "Account not approved by admin" });
+      return res.status(403).json({
+        success: false,
+        message: "Account not approved by admin"
+      });
     }
+
+    const userData = userDoc.data();
+
+    // Count total requests created by user
+    const requestsSnapshot = await db
+      .collection("blood_requests")
+      .where("createdBy", "==", uid)
+      .get();
+    const requestsCount = requestsSnapshot.size;
+
+    // Count total booked by this user
+    const bookedSnapshot = await db
+      .collection("blood_requests")
+      .where("donor.uid", "==", uid)
+      .get();
+    const bookedCount = bookedSnapshot.size;
+
+    // Count total completed by this user
+    const completedSnapshot = await db
+      .collection("blood_requests")
+      .where("donor.uid", "==", uid)
+      .where("status", "==", "completed")
+      .get();
+    const completedCount = completedSnapshot.size;
 
     res.json({
       message: "Profile fetched successfully",
-      result: { uid, ...userDoc.data() }
+      result: {
+        uid,
+        name: userData.name,
+        email: userData.email,
+        dateOfBirth: userData.dateOfBirth,
+        contact: userData.contact || null,
+        bloodGroup: userData.bloodGroup || null,
+        bloodDonatedCount: userData.bloodDonatedCount || 0,
+        requestsCount,
+        bookedCount,
+        completedCount,
+        address: userData.address || {},
+        createdAt: userData.createdAt,
+      }
     });
   } catch (error) {
     console.error("🔥 Profile Error:", error);
-    res.status(500).json({ message: "Failed to fetch Profile", result: res.body });
+    res.status(500).json({ message: "Failed to fetch Profile", result: null });
   }
 });
+
+
+// ------------------ UPDATE LOGGED-IN USER PROFILE ------------------
+// ------------------ UPDATE LOGGED-IN USER PROFILE ------------------
+router.post("/me/update", authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { name, dateOfBirth, contact, bloodGroup, address } = req.body;
+
+    const updateData = {};
+
+    if (name) updateData.name = name.trim();
+    if (dateOfBirth) updateData.dateOfBirth = dateOfBirth; // YYYY-MM-DD
+    if (contact) updateData.contact = contact.trim();
+    if (bloodGroup) updateData.bloodGroup = bloodGroup.trim().toLowerCase();
+    if (address) {
+      updateData.address = {
+        line1: address.line1 || "",
+        line2: address.line2 || "",
+        city: address.city || "",
+        state: address.state || "",
+      };
+    }
+
+    // Update user document
+    await db.collection("users").doc(uid).update(updateData);
+
+    // Fetch updated data
+    const updatedUser = await db.collection("users").doc(uid).get();
+
+    res.json({
+      message: "Profile updated successfully",
+      result: {
+        uid,
+        name: updatedUser.data().name,
+        dateOfBirth: updatedUser.data().dateOfBirth,
+        contact: updatedUser.data().contact,
+        bloodGroup: updatedUser.data().bloodGroup,
+        address: updatedUser.data().address || {},
+        bloodDonatedCount: updatedUser.data().bloodDonatedCount || 0,
+        createdAt: updatedUser.data().createdAt,
+      },
+    });
+  } catch (error) {
+    console.error("🔥 Profile Update Error:", error);
+    res.status(500).json({
+      message: "Failed to update profile",
+      result: null,
+    });
+  }
+});
+
+
+
+// ------------------ GET LOGGED-IN USER'S BLOOD REQUESTS (LIST) ------------------
+router.get("/me/requests", authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.uid; // Logged-in user UID
+    let { page, limit } = req.query;
+
+    page = parseInt(page) || 1;
+    limit = parseInt(limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Fetch all blood requests created by this user
+    let query = db.collection("blood_requests")
+                  .where("createdBy", "==", uid)
+                  .orderBy("createdAt", "desc");
+
+    const snapshot = await query.get();
+    const allDocs = snapshot.docs;
+
+    const paginatedDocs = allDocs.slice(offset, offset + limit);
+
+    const requests = paginatedDocs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        patientName: data.patientName,
+        bloodGroup: data.bloodGroup,
+        hospital: data.hospital,
+        status: data.status || "pending",
+        createdAt: data.createdAt,
+      };
+    });
+
+    const totalPages = Math.ceil(allDocs.length / limit);
+    const baseUrl = `${req.protocol}://${req.get("host")}${req.path}`;
+
+    res.json({
+      message: "Your blood requests fetched successfully",
+      result: requests,
+      links: {
+        first: `${baseUrl}?page=1&limit=${limit}`,
+        last: `${baseUrl}?page=${totalPages}&limit=${limit}`,
+        prev: page > 1 ? `${baseUrl}?page=${page - 1}&limit=${limit}` : null,
+        next: page < totalPages ? `${baseUrl}?page=${page + 1}&limit=${limit}` : null,
+      },
+    });
+
+  } catch (error) {
+    console.error("🔥 Error in /auth/me/requests:", error);
+    res.status(500).json({ message: error.message, result: null });
+  }
+});
+
+
+// ------------------ GET LOGGED-IN USER'S SINGLE BLOOD REQUEST (DETAIL VIEW) ------------------
+router.get("/me/requests/:id", authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.uid; // Logged-in user UID
+    const { id } = req.params;
+
+    const docRef = db.collection("blood_requests").doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({
+        message: "Blood request not found",
+        result: null,
+      });
+    }
+
+    const data = doc.data();
+
+    // Check ownership
+    if (data.createdBy !== uid) {
+      return res.status(403).json({
+        message: "You do not have permission to view this request",
+        result: null,
+      });
+    }
+
+    // Fetch donor info if booked
+    const donorInfo = data.donor
+      ? { uid: data.donor.uid, name: data.donor.name, bookedAt: data.donor.bookedAt }
+      : null;
+
+    const result = {
+      id: doc.id,
+      patientName: data.patientName,
+      bloodGroup: data.bloodGroup,
+      unit: data.unit || 1,
+      hospital: data.hospital,
+      contact: data.contact || null,
+      address: data.address || null,
+      note: data.note || null,
+      status: data.status || "pending",
+      donor: donorInfo,
+      createdAt: data.createdAt,
+    };
+
+    res.json({
+      message: "Blood request details fetched successfully",
+      result,
+    });
+  } catch (error) {
+    console.error("🔥 Error in /auth/me/requests/:id:", error);
+    res.status(500).json({ message: error.message, result: null });
+  }
+});
+
 
 
 module.exports = router;
