@@ -205,7 +205,7 @@ router.get("/me", authMiddleware, async (req, res) => {
         bookedCount,
         completedCount,
         lastDonatedDate: userData.lastDonatedDate || null,
-        profileComplete:userData.profileComplete,
+        profileComplete: userData.profileComplete,
         address: userData.address || {},
         createdAt: userData.createdAt,
       }
@@ -217,95 +217,114 @@ router.get("/me", authMiddleware, async (req, res) => {
 });
 
 
+// ------------------ VALIDATION FUNCTIONS ------------------
+
+// Validate name (string, min 2 chars)
+function validateName(name) {
+  if (!name || typeof name !== "string" || name.trim().length < 2) {
+    return "Name must be at least 2 characters long";
+  }
+  return null;
+}
+
+// Validate date of birth (YYYY-MM-DD) and age >= 18
+function validateDateOfBirth(dobStr) {
+  if (!dobStr) return "Date of birth is required";
+
+  const dobRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dobRegex.test(dobStr)) return "Invalid date of birth format (YYYY-MM-DD)";
+
+  const dob = new Date(dobStr);
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+
+  if (age < 18) return "User must be at least 18 years old";
+
+  return null;
+}
+
+// Validate contact (Bangladesh phone number)
+function validateContact(contact) {
+  if (!contact) return "Contact is required";
+
+  const phoneRegex = /^01[3-9]\d{8}$/;
+  if (!phoneRegex.test(contact)) return "Invalid contact number";
+
+  return null;
+}
+
+// Validate blood group
+function validateBloodGroup(bloodGroup) {
+  const validGroups = ["a+", "a-", "b+", "b-", "ab+", "ab-", "o+", "o-"];
+  if (!bloodGroup) return "Blood group is required";
+
+  if (!validGroups.includes(bloodGroup.trim().toLowerCase())) {
+    return "Invalid blood group";
+  }
+
+  return null;
+}
+
+// Validate address
+function validateAddress(address) {
+  if (!address || typeof address !== "object") {
+    return "Address must be provided as an object";
+  }
+  if (!address.line1 || !address.city || !address.state) {
+    return "Address must include line1, city, and state";
+  }
+  return null;
+}
+
+
 // ------------------ UPDATE LOGGED-IN USER PROFILE ------------------
-router.patch("/me", authMiddleware, async (req, res) => {
+router.post("/me", authMiddleware, async (req, res) => {
   try {
     const uid = req.user.uid;
     const { name, dateOfBirth, contact, bloodGroup, address } = req.body;
 
-    const updateData = {};
+    // ------------------ VALIDATION ------------------
+    const errors = [];
 
-    // Name validation
-    if (name !== undefined) {
-      if (typeof name !== "string" || name.trim().length < 2) {
-        return res.status(400).json({ message: "Invalid name" });
-      }
-      updateData.name = name.trim();
+    const nameError = validateName(name);
+    if (nameError) errors.push(nameError);
+
+    const dobError = validateDateOfBirth(dateOfBirth);
+    if (dobError) errors.push(dobError);
+
+    const contactError = validateContact(contact);
+    if (contactError) errors.push(contactError);
+
+    const bgError = validateBloodGroup(bloodGroup);
+    if (bgError) errors.push(bgError);
+
+    const addressError = validateAddress(address);
+    if (addressError) errors.push(addressError);
+
+    if (errors.length > 0) {
+      return res.status(400).json({
+        message: "Validation failed",
+        errors,
+      });
     }
 
-    // Date of birth validation (YYYY-MM-DD)
-// Date of birth validation (YYYY-MM-DD + 18+ check)
-if (dateOfBirth !== undefined) {
-  const dobRegex = /^\d{4}-\d{2}-\d{2}$/;
-  if (!dobRegex.test(dateOfBirth)) {
-    return res.status(400).json({ message: "Invalid date of birth format" });
-  }
-
-  const dob = new Date(dateOfBirth);
-  const today = new Date();
-
-  let age = today.getFullYear() - dob.getFullYear();
-  const m = today.getMonth() - dob.getMonth();
-
-  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
-    age--;
-  }
-
-  if (age < 18) {
-    return res.status(400).json({
-      message: "User must be at least 18 years old",
-    });
-  }
-
-  updateData.dateOfBirth = dateOfBirth;
-}
-
-
-    // Contact validation (Bangladesh phone)
-    if (contact !== undefined) {
-      const phoneRegex = /^01[3-9]\d{8}$/;
-      if (!phoneRegex.test(contact)) {
-        return res.status(400).json({ message: "Invalid contact number" });
-      }
-      updateData.contact = contact.trim();
-    }
-
-    // Blood group validation
-    if (bloodGroup !== undefined) {
-      const validGroups = [
-        "a+", "a-",
-        "b+", "b-",
-        "ab+", "ab-",
-        "o+", "o-",
-      ];
-      const bg = bloodGroup.trim().toLowerCase();
-
-      if (!validGroups.includes(bg)) {
-        return res.status(400).json({ message: "Invalid blood group" });
-      }
-      updateData.bloodGroup = bg;
-    }
-
-    // Address validation
-    if (address !== undefined) {
-      if (typeof address !== "object") {
-        return res.status(400).json({ message: "Invalid address format" });
-      }
-
-      updateData.address = {
-        line1: address.line1 || "",
+    // ------------------ UPDATE DATA ------------------
+    const updateData = {
+      name: name.trim(),
+      dateOfBirth,
+      contact: contact.trim(),
+      bloodGroup: bloodGroup.trim().toLowerCase(),
+      address: {
+        line1: address.line1,
         line2: address.line2 || "",
-        city: address.city || "",
-        state: address.state || "",
-      };
-    }
+        city: address.city,
+        state: address.state,
+      },
+      profileComplete: true, // mark profile as complete
+    };
 
-    // If nothing to update
-    if (Object.keys(updateData).length === 0) {
-      return res.status(400).json({ message: "No valid fields to update" });
-    }
-
-    // Update user document
     await db.collection("users").doc(uid).update(updateData);
 
     // Fetch updated data
@@ -325,6 +344,7 @@ if (dateOfBirth !== undefined) {
         createdAt: data.createdAt,
       },
     });
+
   } catch (error) {
     console.error("🔥 Profile Update Error:", error);
     res.status(500).json({
@@ -333,6 +353,8 @@ if (dateOfBirth !== undefined) {
     });
   }
 });
+
+
 
 
 
