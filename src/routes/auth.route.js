@@ -217,67 +217,6 @@ router.get("/me", authMiddleware, async (req, res) => {
 });
 
 
-// ------------------ VALIDATION FUNCTIONS ------------------
-
-// Validate name (string, min 2 chars)
-function validateName(name) {
-  if (!name || typeof name !== "string" || name.trim().length < 2) {
-    return "Name must be at least 2 characters long";
-  }
-  return null;
-}
-
-// Validate date of birth (YYYY-MM-DD) and age >= 18
-function validateDateOfBirth(dobStr) {
-  if (!dobStr) return "Date of birth is required";
-
-  const dobRegex = /^\d{4}-\d{2}-\d{2}$/;
-  if (!dobRegex.test(dobStr)) return "Invalid date of birth format (YYYY-MM-DD)";
-
-  const dob = new Date(dobStr);
-  const today = new Date();
-  let age = today.getFullYear() - dob.getFullYear();
-  const m = today.getMonth() - dob.getMonth();
-  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
-
-  if (age < 18) return "User must be at least 18 years old";
-
-  return null;
-}
-
-// Validate contact (Bangladesh phone number)
-function validateContact(contact) {
-  if (!contact) return "Contact is required";
-
-  const phoneRegex = /^01[3-9]\d{8}$/;
-  if (!phoneRegex.test(contact)) return "Invalid contact number";
-
-  return null;
-}
-
-// Validate blood group
-function validateBloodGroup(bloodGroup) {
-  const validGroups = ["a+", "a-", "b+", "b-", "ab+", "ab-", "o+", "o-"];
-  if (!bloodGroup) return "Blood group is required";
-
-  if (!validGroups.includes(bloodGroup.trim().toLowerCase())) {
-    return "Invalid blood group";
-  }
-
-  return null;
-}
-
-// Validate address
-function validateAddress(address) {
-  if (!address || typeof address !== "object") {
-    return "Address must be provided as an object";
-  }
-  if (!address.line1 || !address.city || !address.state) {
-    return "Address must include line1, city, and state";
-  }
-  return null;
-}
-
 
 // ------------------ UPDATE LOGGED-IN USER PROFILE ------------------
 router.post("/me", authMiddleware, async (req, res) => {
@@ -286,28 +225,43 @@ router.post("/me", authMiddleware, async (req, res) => {
     const { name, dateOfBirth, contact, bloodGroup, address } = req.body;
 
     // ------------------ VALIDATION ------------------
-    const errors = [];
+    // Name
+    if (!name || typeof name !== "string" || name.trim().length < 2) {
+      return res.status(400).json({ message: "Invalid name" });
+    }
 
-    const nameError = validateName(name);
-    if (nameError) errors.push(nameError);
+    // Date of birth (YYYY-MM-DD + 18+ check)
+    if (!dateOfBirth) {
+      return res.status(400).json({ message: "Date of birth is required" });
+    }
+    const dobRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dobRegex.test(dateOfBirth)) {
+      return res.status(400).json({ message: "Invalid date of birth format" });
+    }
+    const dob = new Date(dateOfBirth);
+    const today = new Date();
+    let age = today.getFullYear() - dob.getFullYear();
+    const m = today.getMonth() - dob.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+    if (age < 18) {
+      return res.status(400).json({ message: "User must be at least 18 years old" });
+    }
 
-    const dobError = validateDateOfBirth(dateOfBirth);
-    if (dobError) errors.push(dobError);
+    // Contact (Bangladesh phone)
+    const phoneRegex = /^01[3-9]\d{8}$/;
+    if (!contact || !phoneRegex.test(contact)) {
+      return res.status(400).json({ message: "Invalid contact number" });
+    }
 
-    const contactError = validateContact(contact);
-    if (contactError) errors.push(contactError);
+    // Blood group
+    const validGroups = ["a+", "a-", "b+", "b-", "ab+", "ab-", "o+", "o-"];
+    if (!bloodGroup || !validGroups.includes(bloodGroup.trim().toLowerCase())) {
+      return res.status(400).json({ message: "Invalid blood group" });
+    }
 
-    const bgError = validateBloodGroup(bloodGroup);
-    if (bgError) errors.push(bgError);
-
-    const addressError = validateAddress(address);
-    if (addressError) errors.push(addressError);
-
-    if (errors.length > 0) {
-      return res.status(400).json({
-        message: "Validation failed",
-        errors,
-      });
+    // Address
+    if (!address || typeof address !== "object" || !address.line1 || !address.city || !address.state) {
+      return res.status(400).json({ message: "Invalid address" });
     }
 
     // ------------------ UPDATE DATA ------------------
@@ -322,12 +276,11 @@ router.post("/me", authMiddleware, async (req, res) => {
         city: address.city,
         state: address.state,
       },
-      profileComplete: true, // mark profile as complete
+      profileComplete: true,
     };
 
     await db.collection("users").doc(uid).update(updateData);
 
-    // Fetch updated data
     const updatedUser = await db.collection("users").doc(uid).get();
     const data = updatedUser.data();
 
@@ -353,9 +306,6 @@ router.post("/me", authMiddleware, async (req, res) => {
     });
   }
 });
-
-
-
 
 
 
