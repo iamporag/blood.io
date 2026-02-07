@@ -186,7 +186,7 @@ router.get("/", async (req, res) => {
     limit = parseInt(limit) || 10;
     const offset = (page - 1) * limit;
 
-    let query = db.collection("blood_requests");
+    let query = db.collection("blood_requests").where("status", "==", "pending");;
 
     // Filter by city (nested address field)
     if (city) {
@@ -356,6 +356,28 @@ router.post("/:id/book", authMiddleware, profileComplete, async (req, res) => {
       });
     }
 
+    // ------------------ NOTIFY REQUEST CREATOR ------------------
+    const creatorUid = requestData.createdBy;
+
+    // Get creator FCM token
+    const creatorDoc = await db.collection("users").doc(creatorUid).get();
+    const creatorToken = creatorDoc.data()?.fcmToken;
+
+    if (creatorToken) {
+      await admin.messaging().send({
+        token: creatorToken,
+        notification: {
+          title: "🩸 Blood request booked",
+          body: `${donorName || "A donor"} has booked your blood request`,
+        },
+        data: {
+          type: "request_booked",
+          requestId: req.params.id,
+        },
+      });
+    }
+
+
     // Get donor info
     const donorDoc = await db.collection("users").doc(donorUid).get();
     const donorName = donorDoc.exists ? donorDoc.data().name : null;
@@ -406,6 +428,25 @@ router.post("/:id/complete", authMiddleware, profileComplete, async (req, res) =
     if (data.status === "completed") {
       return res.status(400).json({ message: "Donation already completed" });
     }
+
+    // ------------------ NOTIFY DONOR ------------------
+    const donorDoc = await db.collection("users").doc(data.donor.uid).get();
+    const donorToken = donorDoc.data()?.fcmToken;
+
+    if (donorToken) {
+      await admin.messaging().send({
+        token: donorToken,
+        notification: {
+          title: "✅ Donation completed",
+          body: "Your blood donation has been marked as completed. Thank you!",
+        },
+        data: {
+          type: "donation_completed",
+          requestId: req.params.id,
+        },
+      });
+    }
+
 
     // Mark as completed
     await requestRef.update({ status: "completed" });
