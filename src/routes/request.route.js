@@ -110,6 +110,7 @@ router.post("/", authMiddleware, profileComplete, async (req, res) => {
       contact: contact.toString(),
       donationDate,
       note: note || null,
+      status: "pending",
       createdBy: uid,
       createdAt: new Date().toISOString(),
     });
@@ -356,31 +357,37 @@ router.post("/:id/book", authMiddleware, profileComplete, async (req, res) => {
       });
     }
 
+    // Get donor info first
+    const donorDoc = await db.collection("users").doc(donorUid).get();
+    const donorName = donorDoc.exists ? donorDoc.data().name : null;
+
     // ------------------ NOTIFY REQUEST CREATOR ------------------
     const creatorUid = requestData.createdBy;
 
     // Get creator FCM token
     const creatorDoc = await db.collection("users").doc(creatorUid).get();
-    const creatorToken = creatorDoc.data()?.fcmToken;
+    const creatorToken = creatorDoc.data()?.deviceToken;
 
     if (creatorToken) {
-      await admin.messaging().send({
-        token: creatorToken,
-        notification: {
-          title: "🩸 Blood request booked",
-          body: `${donorName || "A donor"} has booked your blood request`,
-        },
-        data: {
-          type: "request_booked",
-          requestId: req.params.id,
-        },
-      });
+      try {
+        const response = await admin.messaging().send({
+          token: creatorToken,
+          notification: {
+            title: "🩸 Blood request booked",
+            body: `${donorName || "A donor"} has booked your blood request`,
+          },
+          data: {
+            type: "request_booked",
+            requestId: req.params.id,
+          },
+        });
+
+        console.log("FCM sent:", response);
+      } catch (err) {
+        console.error("FCM error:", err);
+      }
     }
 
-
-    // Get donor info
-    const donorDoc = await db.collection("users").doc(donorUid).get();
-    const donorName = donorDoc.exists ? donorDoc.data().name : null;
 
     // Book the request
     await requestRef.update({
@@ -391,6 +398,16 @@ router.post("/:id/book", authMiddleware, profileComplete, async (req, res) => {
         bookedAt: new Date().toISOString(),
       },
     });
+
+    // ------------------ SAVE ONLY REQUEST ID IN DONOR BOOKING LIST ------------------
+    const donorRef = db.collection("users").doc(donorUid);
+
+    await donorRef.update({
+      myBookings: admin.firestore.FieldValue.arrayUnion(req.params.id),
+    });
+
+
+
 
     res.json({ message: "Blood request booked successfully" });
   } catch (error) {
@@ -431,7 +448,7 @@ router.post("/:id/complete", authMiddleware, profileComplete, async (req, res) =
 
     // ------------------ NOTIFY DONOR ------------------
     const donorDoc = await db.collection("users").doc(data.donor.uid).get();
-    const donorToken = donorDoc.data()?.fcmToken;
+    const donorToken = donorDoc.data()?.deviceToken;
 
     if (donorToken) {
       await admin.messaging().send({
