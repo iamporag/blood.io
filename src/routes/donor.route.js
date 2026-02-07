@@ -2,91 +2,79 @@ const express = require("express");
 const router = express.Router();
 const authMiddleware = require("../middleware/auth.middleware");
 const { db } = require("../config/firebase");
-// donor list route
-// donor list route
 router.get("/", authMiddleware, async (req, res) => {
-    try {
-        let { page, limit } = req.query;
-        page = parseInt(page) || 1;      // default page 1
-        limit = parseInt(limit) || 10;   // default 10 items per page
-        const currentUserId = req.user.uid;
+  try {
+    let { page, limit } = req.query;
+    page = parseInt(page) || 1;
+    limit = parseInt(limit) || 10;
 
-        const now = new Date();
+    const currentUserId = req.user.uid;
+    const now = new Date();
 
-        let query = db.collection("users")
-            .where("status", "==", "active")
-            .orderBy("createdAt", "desc");
+    // Base query
+    let query = db.collection("users")
+      .where("profileComplete", "==", true)
+      .where("status", "==", "active")
+      .orderBy("createdAt", "desc");
 
-        // Pagination
-        if (page > 1) {
-            const prevSnapshot = await query.limit((page - 1) * limit).get();
-            if (!prevSnapshot.empty) {
-                const lastDoc = prevSnapshot.docs[prevSnapshot.docs.length - 1];
-                query = query.startAfter(lastDoc);
-            }
-        }
+    const snapshot = await query.get();
+    const allDocs = snapshot.docs;
 
-        const snapshot = await query.limit(limit).get();
-        const donors = [];
+    // Manual pagination
+    const offset = (page - 1) * limit;
+    const paginatedDocs = allDocs.slice(offset, offset + limit);
 
-        snapshot.forEach(doc => {
-            if (doc.id === currentUserId) return; // skip current user
+    const donors = [];
 
-            const data = doc.data();
+    paginatedDocs.forEach(doc => {
+      if (doc.id === currentUserId) return;
 
-            let dynamicIsDoner = true;
-            let lastDonationRaw = data.lastDonationDate || null;
+      const data = doc.data();
 
-            if (lastDonationRaw) {
-                const lastDonationDate = new Date(lastDonationRaw);
+      let dynamicIsDonor = true;
+      let lastDonationRaw = data.lastDonationDate || null;
 
-                // Calculate exact 4 months later using milliseconds
-                const fourMonthsLater = new Date(lastDonationDate);
-                fourMonthsLater.setMonth(fourMonthsLater.getMonth() + 4);
+      if (lastDonationRaw) {
+        const lastDonationDate = new Date(lastDonationRaw);
+        const fourMonthsLater = new Date(lastDonationDate);
+        fourMonthsLater.setMonth(fourMonthsLater.getMonth() + 4);
 
-                // Only eligible if current time >= exactly 4 months later
-                dynamicIsDoner = now.getTime() >= fourMonthsLater.getTime();
-            }
+        dynamicIsDonor = now.getTime() >= fourMonthsLater.getTime();
+      }
 
-            donors.push({
-                uid: doc.id,
-                name: data.name,
-                bloodGroup: data.bloodGroup,
-                district: data.district,
-                phone: data.phone || null,
-                lastDonationDate: lastDonationRaw,
-                isDoner: dynamicIsDoner,
-            });
-        });
+      donors.push({
+        uid: doc.id,
+        name: data.name,
+        bloodGroup: data.bloodGroup,
+        contact: data.contact || null,
+        address: data.address || null,
+        lastDonationDate: lastDonationRaw,
+        isDonor: dynamicIsDonor,
+      });
+    });
 
-        // Total count for pagination
-        const totalSnapshot = await db.collection("users")
-            .where("isDoner", "==", true)
-            .where("status", "==", "approved")
-            .get();
-        const total = totalSnapshot.size;
-        const totalPages = Math.ceil(total / limit);
+    const total = allDocs.length;
+    const totalPages = Math.ceil(total / limit);
+    const baseUrl = `${req.protocol}://${req.get("host")}${req.path}`;
 
-        const baseUrl = `${req.protocol}://${req.get("host")}${req.path}`;
+    res.json({
+      message: "Donors fetched successfully",
+      result: donors,
+      links: {
+        first: `${baseUrl}?page=1&limit=${limit}`,
+        last: `${baseUrl}?page=${totalPages}&limit=${limit}`,
+        prev: page > 1 ? `${baseUrl}?page=${page - 1}&limit=${limit}` : null,
+        next: page < totalPages ? `${baseUrl}?page=${page + 1}&limit=${limit}` : null,
+      },
+    });
 
-        res.json({
-            message: "Donors fetched successfully",
-            result: donors,
-            links: {
-                first: `${baseUrl}?page=1&limit=${limit}`,
-                last: `${baseUrl}?page=${totalPages}&limit=${limit}`,
-                prev: page > 1 ? `${baseUrl}?page=${page - 1}&limit=${limit}` : null,
-                next: page < totalPages ? `${baseUrl}?page=${page + 1}&limit=${limit}` : null,
-            },
-        });
-
-    } catch (error) {
-        console.error("🔥 Donor List Error:", error);
-        res.status(500).json({
-            message: "Failed to fetch donors",
-            result: null,
-        });
-    }
+  } catch (error) {
+    console.error("🔥 Donor List Error:", error);
+    res.status(500).json({
+      message: error.message,
+      result: null,
+    });
+  }
 });
 
 // ------------------ GET DONOR BY ID ------------------

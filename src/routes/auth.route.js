@@ -218,19 +218,80 @@ router.get("/me", authMiddleware, async (req, res) => {
 
 
 // ------------------ UPDATE LOGGED-IN USER PROFILE ------------------
-// ------------------ UPDATE LOGGED-IN USER PROFILE ------------------
-router.post("/me/update", authMiddleware, async (req, res) => {
+router.patch("/me", authMiddleware, async (req, res) => {
   try {
     const uid = req.user.uid;
     const { name, dateOfBirth, contact, bloodGroup, address } = req.body;
 
     const updateData = {};
 
-    if (name) updateData.name = name.trim();
-    if (dateOfBirth) updateData.dateOfBirth = dateOfBirth; // YYYY-MM-DD
-    if (contact) updateData.contact = contact.trim();
-    if (bloodGroup) updateData.bloodGroup = bloodGroup.trim().toLowerCase();
-    if (address) {
+    // Name validation
+    if (name !== undefined) {
+      if (typeof name !== "string" || name.trim().length < 2) {
+        return res.status(400).json({ message: "Invalid name" });
+      }
+      updateData.name = name.trim();
+    }
+
+    // Date of birth validation (YYYY-MM-DD)
+// Date of birth validation (YYYY-MM-DD + 18+ check)
+if (dateOfBirth !== undefined) {
+  const dobRegex = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dobRegex.test(dateOfBirth)) {
+    return res.status(400).json({ message: "Invalid date of birth format" });
+  }
+
+  const dob = new Date(dateOfBirth);
+  const today = new Date();
+
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+    age--;
+  }
+
+  if (age < 18) {
+    return res.status(400).json({
+      message: "User must be at least 18 years old",
+    });
+  }
+
+  updateData.dateOfBirth = dateOfBirth;
+}
+
+
+    // Contact validation (Bangladesh phone)
+    if (contact !== undefined) {
+      const phoneRegex = /^01[3-9]\d{8}$/;
+      if (!phoneRegex.test(contact)) {
+        return res.status(400).json({ message: "Invalid contact number" });
+      }
+      updateData.contact = contact.trim();
+    }
+
+    // Blood group validation
+    if (bloodGroup !== undefined) {
+      const validGroups = [
+        "a+", "a-",
+        "b+", "b-",
+        "ab+", "ab-",
+        "o+", "o-",
+      ];
+      const bg = bloodGroup.trim().toLowerCase();
+
+      if (!validGroups.includes(bg)) {
+        return res.status(400).json({ message: "Invalid blood group" });
+      }
+      updateData.bloodGroup = bg;
+    }
+
+    // Address validation
+    if (address !== undefined) {
+      if (typeof address !== "object") {
+        return res.status(400).json({ message: "Invalid address format" });
+      }
+
       updateData.address = {
         line1: address.line1 || "",
         line2: address.line2 || "",
@@ -239,23 +300,29 @@ router.post("/me/update", authMiddleware, async (req, res) => {
       };
     }
 
+    // If nothing to update
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ message: "No valid fields to update" });
+    }
+
     // Update user document
     await db.collection("users").doc(uid).update(updateData);
 
     // Fetch updated data
     const updatedUser = await db.collection("users").doc(uid).get();
+    const data = updatedUser.data();
 
     res.json({
       message: "Profile updated successfully",
       result: {
         uid,
-        name: updatedUser.data().name,
-        dateOfBirth: updatedUser.data().dateOfBirth,
-        contact: updatedUser.data().contact,
-        bloodGroup: updatedUser.data().bloodGroup,
-        address: updatedUser.data().address || {},
-        bloodDonatedCount: updatedUser.data().bloodDonatedCount || 0,
-        createdAt: updatedUser.data().createdAt,
+        name: data.name,
+        dateOfBirth: data.dateOfBirth,
+        contact: data.contact,
+        bloodGroup: data.bloodGroup,
+        address: data.address || {},
+        bloodDonatedCount: data.bloodDonatedCount || 0,
+        createdAt: data.createdAt,
       },
     });
   } catch (error) {
@@ -266,6 +333,7 @@ router.post("/me/update", authMiddleware, async (req, res) => {
     });
   }
 });
+
 
 
 
