@@ -336,6 +336,8 @@ router.get("/me/requests", authMiddleware, async (req, res) => {
         patientName: data.patientName,
         bloodGroup: data.bloodGroup,
         hospital: data.hospital,
+          unit: data.unit || 1,
+        donationDate: data.donationDate || null,
         status: data.status || "pending",
         createdAt: data.createdAt,
       };
@@ -470,6 +472,8 @@ router.get("/me/bookings", authMiddleware, async (req, res) => {
         id: doc.id,
         patientName: data.patientName,
         bloodGroup: data.bloodGroup,
+        unit: data.unit || 1,
+        donationDate: data.donationDate || null,
         hospital: data.hospital,
         status: data.status || "pending",
         createdAt: data.createdAt,
