@@ -335,10 +335,31 @@ router.post("/:id/book", authMiddleware, profileComplete, async (req, res) => {
     const donorDoc = await db.collection("users").doc(donorUid).get();
     if (!donorDoc.exists) return res.status(404).json({ message: "Donor not found" });
 
+
+
     const donorData = donorDoc.data();
     const donorName = donorData.name || "Donor";
     const donorBloodGroup = donorData.bloodGroup;
+    const lastDonatedDate = donorData.lastDonatedDate;
 
+    // ------------------ 90 DAY DONATION RULE ------------------
+    if (lastDonatedDate) {
+      const lastDate = new Date(lastDonatedDate);
+      const now = new Date();
+
+      const diffTime = now - lastDate; // milliseconds difference
+      const diffDays = diffTime / (1000 * 60 * 60 * 24);
+
+      if (diffDays < 90) {
+        const remainingDays = Math.ceil(90 - diffDays);
+
+        return res.status(403).json({
+          message: `You can donate again after ${remainingDays} day(s).`,
+        });
+      }
+    }
+
+    // ------------------ BLOOD GROUP MATCHING ------------------
     if (!donorBloodGroup || donorBloodGroup !== requestData.bloodGroup)
       return res.status(403).json({ message: `Blood group mismatch. Required: ${requestData.bloodGroup}` });
 
