@@ -141,10 +141,10 @@ router.post("/", authMiddleware, profileComplete, async (req, res) => {
 
     await db.collection("notifications").add(notificationData);
 
-    console.log("🚀 Sending notification to topic: all_users");
+    console.log("🚀 Sending notification to blood group topic:", bloodGroupUpper);
 
     const response = await admin.messaging().send({
-      topic: "all_users",
+      topic: `blood_${bloodGroupUpper}`, // 🔥 dynamic topic
       notification: {
         title: `🩸 ${formattedNote} ${bloodGroupUpper} Needed`,
         body: `${bloodGroupUpper} blood needed at ${hospital}, ${address.city}`,
@@ -156,8 +156,6 @@ router.post("/", authMiddleware, profileComplete, async (req, res) => {
         hospital: hospital || "",
       },
     });
-
-
 
     console.log("✅ FCM RESPONSE:", response);
 
@@ -177,7 +175,6 @@ router.post("/", authMiddleware, profileComplete, async (req, res) => {
   }
 });
 
-
 // ------------------ LIST BLOOD REQUESTS ------------------
 router.get("/", async (req, res) => {
   try {
@@ -187,7 +184,13 @@ router.get("/", async (req, res) => {
     limit = parseInt(limit) || 10;
     const offset = (page - 1) * limit;
 
-    let query = db.collection("blood_requests").where("status", "==", "pending");;
+    const nowISO = new Date().toISOString();
+
+    let query = db
+      .collection("blood_requests")
+      .where("status", "==", "pending")
+      // Only requests with donationDate in future
+      .where("donationDate", ">=", nowISO);
 
     // Filter by city (nested address field)
     if (city) {
@@ -208,12 +211,9 @@ router.get("/", async (req, res) => {
     // Manual pagination
     const paginatedDocs = allDocs.slice(offset, offset + limit);
 
-    const requests = [];
-
-    for (const doc of paginatedDocs) {
+    const requests = paginatedDocs.map((doc) => {
       const data = doc.data();
-
-      requests.push({
+      return {
         id: doc.id,
         patientName: data.patientName,
         bloodGroup: data.bloodGroup,
@@ -222,8 +222,8 @@ router.get("/", async (req, res) => {
         contact: data.contact || null,
         note: data.note || null,
         donationDate: data.donationDate,
-      });
-    }
+      };
+    });
 
     const totalPages = Math.ceil(allDocs.length / limit);
     const baseUrl = `${req.protocol}://${req.get("host")}${req.path}`;
@@ -248,7 +248,6 @@ router.get("/", async (req, res) => {
     res.status(500).json({ message: error.message, result: null });
   }
 });
-
 
 // ------------------ GET BLOOD REQUEST BY ID ------------------
 router.get("/:id", authMiddleware, async (req, res) => {
@@ -319,95 +318,81 @@ router.get("/:id", authMiddleware, async (req, res) => {
 router.post("/:id/book", authMiddleware, profileComplete, async (req, res) => {
   try {
     const donorUid = req.user.uid;
+    const requestRef = db.collection("blood_requests").doc(req.params.id);
+    const requestDoc = await requestRef.get();
 
-    // 🔒 Check if donor already has an active booking
-    const activeBookingQuery = await db
+    if (!requestDoc.exists) return res.status(404).json({ message: "Blood request not found" });
+
+    const requestData = requestDoc.data();
+
+    // Prevent self-booking & already booked
+    if (requestData.createdBy === donorUid)
+      return res.status(403).json({ message: "You cannot book your own blood request" });
+    if (requestData.donor)
+      return res.status(403).json({ message: "This request is already booked" });
+
+    // Get donor info
+    const donorDoc = await db.collection("users").doc(donorUid).get();
+    if (!donorDoc.exists) return res.status(404).json({ message: "Donor not found" });
+
+    const donorData = donorDoc.data();
+    const donorName = donorData.name || "Donor";
+    const donorBloodGroup = donorData.bloodGroup;
+
+    if (!donorBloodGroup || donorBloodGroup !== requestData.bloodGroup)
+      return res.status(403).json({ message: `Blood group mismatch. Required: ${requestData.bloodGroup}` });
+
+    // Check if donor has active booking
+    const activeBooking = await db
       .collection("blood_requests")
       .where("donor.uid", "==", donorUid)
       .where("status", "==", "booked")
       .limit(1)
       .get();
 
-    if (!activeBookingQuery.empty) {
-      return res.status(403).json({
-        message: "You already have an active booked request. Complete it first.",
-      });
-    }
+    if (!activeBooking.empty)
+      return res.status(403).json({ message: "You already have an active booked request." });
 
-    const requestRef = db.collection("blood_requests").doc(req.params.id);
-    const requestDoc = await requestRef.get();
+    // ------------------ BOOK REQUEST ------------------
+    await requestRef.update({
+      status: "booked",
+      donor: { uid: donorUid, name: donorName, bloodGroup: donorBloodGroup, bookedAt: new Date().toISOString() },
+    });
 
-    if (!requestDoc.exists) {
-      return res.status(404).json({ message: "Blood request not found" });
-    }
+    await db.collection("users").doc(donorUid).update({
+      myBookings: admin.firestore.FieldValue.arrayUnion(req.params.id),
+    });
 
-    const requestData = requestDoc.data();
+    // ------------------ CREATE NOTIFICATION FOR CREATOR ------------------
+    const notificationData = {
+      type: "request_booked",
+      bloodRequestId: requestDoc.id,
+      title: "🩸 Blood request booked",
+      body: `${donorName} has booked your blood request for ${requestData.bloodGroup}`,
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    };
 
-    // Prevent the creator from booking their own request
-    if (requestData.createdBy === donorUid) {
-      return res.status(403).json({
-        message: "You cannot book your own blood request",
-      });
-    }
+    await db.collection("notifications").add(notificationData);
 
-    // Prevent booking if already booked
-    if (requestData.donor) {
-      return res.status(403).json({
-        message: "This request is already booked by another donor",
-      });
-    }
-
-    // Get donor info first
-    const donorDoc = await db.collection("users").doc(donorUid).get();
-    const donorName = donorDoc.exists ? donorDoc.data().name : null;
-
-    // ------------------ NOTIFY REQUEST CREATOR ------------------
-    const creatorUid = requestData.createdBy;
-
-    // Get creator FCM token
-    const creatorDoc = await db.collection("users").doc(creatorUid).get();
+    // FCM to creator
+    const creatorDoc = await db.collection("users").doc(requestData.createdBy).get();
     const creatorToken = creatorDoc.data()?.deviceToken;
 
     if (creatorToken) {
       try {
-        const response = await admin.messaging().send({
+        await admin.messaging().send({
           token: creatorToken,
-          notification: {
-            title: "🩸 Blood request booked",
-            body: `${donorName || "A donor"} has booked your blood request`,
-          },
-          data: {
-            type: "request_booked",
-            requestId: req.params.id,
-          },
+          notification: { title: notificationData.title, body: notificationData.body },
+          data: { type: notificationData.type, requestId: notificationData.bloodRequestId },
         });
-
-        console.log("FCM sent:", response);
       } catch (err) {
-        console.error("FCM error:", err);
+        console.error("FCM error:", err.code, err.message);
+        if (err.code === "messaging/registration-token-not-registered") {
+          await db.collection("users").doc(requestData.createdBy).update({ deviceToken: admin.firestore.FieldValue.delete() });
+        }
       }
     }
-
-
-    // Book the request
-    await requestRef.update({
-      status: "booked",
-      donor: {
-        uid: donorUid,
-        name: donorName,
-        bookedAt: new Date().toISOString(),
-      },
-    });
-
-    // ------------------ SAVE ONLY REQUEST ID IN DONOR BOOKING LIST ------------------
-    const donorRef = db.collection("users").doc(donorUid);
-
-    await donorRef.update({
-      myBookings: admin.firestore.FieldValue.arrayUnion(req.params.id),
-    });
-
-
-
 
     res.json({ message: "Blood request booked successfully" });
   } catch (error) {
@@ -417,66 +402,107 @@ router.post("/:id/book", authMiddleware, profileComplete, async (req, res) => {
 });
 
 
-// ------------------ COMPLETE BLOOD DONATION (Request Owner Only) ------------------
+// ------------------ COMPLETE BLOOD DONATION ------------------
 router.post("/:id/complete", authMiddleware, profileComplete, async (req, res) => {
   try {
     const userUid = req.user.uid;
-
     const requestRef = db.collection("blood_requests").doc(req.params.id);
     const requestDoc = await requestRef.get();
 
-    if (!requestDoc.exists) {
-      return res.status(404).json({ message: "Blood request not found" });
-    }
+    if (!requestDoc.exists) return res.status(404).json({ message: "Blood request not found" });
 
     const data = requestDoc.data();
 
-    // Only the user who created the request can mark it as completed
-    if (data.createdBy !== userUid) {
+    if (data.createdBy !== userUid)
       return res.status(403).json({ message: "Only the request owner can complete this donation" });
-    }
 
-    // Cannot complete if request is not booked by any donor
-    if (!data.donor || !data.donor.uid) {
+    if (!data.donor || !data.donor.uid)
       return res.status(400).json({ message: "No donor has booked this request yet" });
-    }
 
-    // Prevent double completion
-    if (data.status === "completed") {
-      return res.status(400).json({ message: "Donation already completed" });
-    }
+    if (data.status === "completed") return res.status(400).json({ message: "Donation already completed" });
 
-    // ------------------ NOTIFY DONOR ------------------
-    const donorDoc = await db.collection("users").doc(data.donor.uid).get();
+    const donorRef = db.collection("users").doc(data.donor.uid);
+    const donorDoc = await donorRef.get();
+    const donorName = donorDoc.exists ? donorDoc.data().name : data.donor.name;
     const donorToken = donorDoc.data()?.deviceToken;
 
-    if (donorToken) {
-      await admin.messaging().send({
-        token: donorToken,
-        notification: {
-          title: "✅ Donation completed",
-          body: "Your blood donation has been marked as completed. Thank you!",
-        },
-        data: {
-          type: "donation_completed",
-          requestId: req.params.id,
-        },
-      });
-    }
-
-
-    // Mark as completed
+    // ------------------ MARK REQUEST AS COMPLETED ------------------
     await requestRef.update({ status: "completed" });
 
-    // Increment donor's bloodDonatedCount
-    const donorRef = db.collection("users").doc(data.donor.uid);
-    await donorRef.update({
-      bloodDonatedCount: admin.firestore.FieldValue.increment(1),
-    });
+    await donorRef.update({ bloodDonatedCount: admin.firestore.FieldValue.increment(1) });
+
+    // ------------------ CREATE NOTIFICATION FOR DONOR ------------------
+    const notificationData = {
+      type: "donation_completed",
+      bloodRequestId: requestDoc.id,
+      title: "✅ Donation completed",
+      body: `Your blood donation for ${data.bloodGroup} has been marked as completed. Thank you, ${donorName}!`,
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    };
+
+    await db.collection("notifications").add(notificationData);
+
+    // FCM to donor
+    if (donorToken) {
+      try {
+        await admin.messaging().send({
+          token: donorToken,
+          notification: { title: notificationData.title, body: notificationData.body },
+          data: { type: notificationData.type, requestId: notificationData.bloodRequestId },
+        });
+      } catch (err) {
+        console.error("FCM error:", err.code, err.message);
+        if (err.code === "messaging/registration-token-not-registered") {
+          await donorRef.update({ deviceToken: admin.firestore.FieldValue.delete() });
+        }
+      }
+    }
 
     res.json({ message: "Donation marked as completed successfully" });
   } catch (error) {
     console.error("🔥 Error in completing donation:", error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+
+// ------------------ REFRESH EXPIRED BLOOD REQUESTS ------------------
+router.post("/refresh", authMiddleware, async (req, res) => {
+  try {
+    const now = new Date();
+    const dbRef = db.collection("blood_requests");
+
+    // Get all pending requests
+    const snapshot = await dbRef.where("status", "==", "pending").get();
+
+    if (snapshot.empty) {
+      return res.json({ message: "No pending blood requests found", updated: 0 });
+    }
+
+    const batch = db.batch();
+    let updatedCount = 0;
+
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      const donationDate = new Date(data.donationDate);
+
+      if (donationDate < now) {
+        batch.update(doc.ref, { status: "expired" });
+        updatedCount++;
+      }
+    });
+
+    if (updatedCount > 0) {
+      await batch.commit();
+    }
+
+    res.json({
+      message: "Expired blood requests refreshed successfully",
+      updated: updatedCount,
+    });
+  } catch (error) {
+    console.error("🔥 Error refreshing expired blood requests:", error);
     res.status(500).json({ message: error.message });
   }
 });

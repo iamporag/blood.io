@@ -418,5 +418,146 @@ router.get("/me/requests/:id", authMiddleware, async (req, res) => {
 });
 
 
+// ------------------ GET LOGGED-IN USER'S BOOKING LIST ------------------
+// ------------------ GET LOGGED-IN USER'S BOOKING LIST (OPTIMIZED) ------------------
+router.get("/me/bookings", authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    let { page, limit } = req.query;
+
+    page = parseInt(page) || 1;
+    limit = parseInt(limit) || 10;
+
+    // Firestore "in" supports max 10 values
+    if (limit > 10) limit = 10;
+
+    const offset = (page - 1) * limit;
+
+    // 1️⃣ Get user document
+    const userDoc = await db.collection("users").doc(uid).get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        message: "User not found",
+        result: null,
+      });
+    }
+
+    const myBookings = userDoc.data().myBookings || [];
+
+    if (myBookings.length === 0) {
+      return res.json({
+        message: "No bookings found",
+        result: [],
+        links: null,
+      });
+    }
+
+    const totalPages = Math.ceil(myBookings.length / limit);
+
+    // 2️⃣ Pagination on IDs
+    const paginatedIds = myBookings.slice(offset, offset + limit);
+
+    // 3️⃣ 🔥 Single Firestore Query using "in"
+    const snapshot = await db.collection("blood_requests")
+      .where(admin.firestore.FieldPath.documentId(), "in", paginatedIds)
+      .orderBy("createdAt", "desc")
+      .get();
+
+    const requests = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        patientName: data.patientName,
+        bloodGroup: data.bloodGroup,
+        hospital: data.hospital,
+        status: data.status || "pending",
+        createdAt: data.createdAt,
+      };
+    });
+
+    const baseUrl = `${req.protocol}://${req.get("host")}${req.path}`;
+
+    res.json({
+      message: "My bookings fetched successfully",
+      result: requests,
+      links: {
+        first: `${baseUrl}?page=1&limit=${limit}`,
+        last: `${baseUrl}?page=${totalPages}&limit=${limit}`,
+        prev: page > 1 ? `${baseUrl}?page=${page - 1}&limit=${limit}` : null,
+        next: page < totalPages ? `${baseUrl}?page=${page + 1}&limit=${limit}` : null,
+      },
+    });
+
+  } catch (error) {
+    console.error("🔥 Error in /me/bookings:", error);
+    res.status(500).json({ message: error.message, result: null });
+  }
+});
+
+// ------------------ GET SINGLE BOOKING DETAIL ------------------
+router.get("/me/bookings/:id", authMiddleware, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const { id } = req.params;
+
+    // 1️⃣ Get user document
+    const userDoc = await db.collection("users").doc(uid).get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        message: "User not found",
+        result: null,
+      });
+    }
+
+    const userData = userDoc.data();
+    const myBookings = userData.myBookings || [];
+
+    // 2️⃣ Check booking ownership
+    if (!myBookings.includes(id)) {
+      return res.status(403).json({
+        message: "You do not have permission to view this booking",
+        result: null,
+      });
+    }
+
+    // 3️⃣ Fetch blood request
+    const doc = await db.collection("blood_requests").doc(id).get();
+
+    if (!doc.exists) {
+      return res.status(404).json({
+        message: "Blood request not found",
+        result: null,
+      });
+    }
+
+    const data = doc.data();
+
+    const result = {
+      id: doc.id,
+      patientName: data.patientName,
+      bloodGroup: data.bloodGroup,
+      unit: data.unit || 1,
+      hospital: data.hospital,
+      contact: data.contact || null,
+      address: data.address || null,
+      note: data.note || null,
+      status: data.status || "pending",
+      createdAt: data.createdAt,
+      createdBy: data.createdBy,
+      donor: data.donor || null,
+    };
+
+    res.json({
+      message: "Booking details fetched successfully",
+      result,
+    });
+
+  } catch (error) {
+    console.error("🔥 Error in /me/bookings/:id:", error);
+    res.status(500).json({ message: error.message, result: null });
+  }
+});
 
 module.exports = router;
