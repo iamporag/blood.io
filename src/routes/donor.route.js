@@ -106,7 +106,7 @@ router.get("/:id", authMiddleware, async (req, res) => {
 
         const doc = await db.collection("users").doc(donorId).get();
 
-        if (!doc.exists || !doc.data().isDoner || doc.data().status !== "approved") {
+        if (!doc.exists || !doc.data().isDonor || doc.data().status !== "active") {
             return res.status(404).json({
                 message: "Donor not found",
                 result: null,
