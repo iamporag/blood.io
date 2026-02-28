@@ -184,13 +184,14 @@ router.get("/", async (req, res) => {
     limit = parseInt(limit) || 10;
     const offset = (page - 1) * limit;
 
-    const nowISO = new Date().toISOString();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
     let query = db
       .collection("blood_requests")
       .where("status", "==", "pending")
-      // Only requests with donationDate in future
-      .where("donationDate", ">=", nowISO);
+      // Valid until the end of donationDate
+      .where("donationDate", ">=", today.toISOString());
 
     // Filter by city (nested address field)
     if (city) {
@@ -487,14 +488,12 @@ router.post("/:id/complete", authMiddleware, profileComplete, async (req, res) =
   }
 });
 
-
 // ------------------ REFRESH EXPIRED BLOOD REQUESTS ------------------
 router.post("/refresh", authMiddleware, async (req, res) => {
   try {
     const now = new Date();
     const dbRef = db.collection("blood_requests");
 
-    // Get all pending requests
     const snapshot = await dbRef.where("status", "==", "pending").get();
 
     if (snapshot.empty) {
@@ -506,9 +505,18 @@ router.post("/refresh", authMiddleware, async (req, res) => {
 
     snapshot.docs.forEach(doc => {
       const data = doc.data();
+
       const donationDate = new Date(data.donationDate);
 
-      if (donationDate < now) {
+      // 🔥 Add 1 day to donationDate (next midnight)
+      const expireTime = new Date(
+        donationDate.getFullYear(),
+        donationDate.getMonth(),
+        donationDate.getDate() + 1,
+        0, 0, 0, 0
+      );
+
+      if (now >= expireTime) {
         batch.update(doc.ref, { status: "expired" });
         updatedCount++;
       }
@@ -522,6 +530,7 @@ router.post("/refresh", authMiddleware, async (req, res) => {
       message: "Expired blood requests refreshed successfully",
       updated: updatedCount,
     });
+
   } catch (error) {
     console.error("🔥 Error refreshing expired blood requests:", error);
     res.status(500).json({ message: error.message });
