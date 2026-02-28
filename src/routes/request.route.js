@@ -184,32 +184,33 @@ router.get("/", async (req, res) => {
     limit = parseInt(limit) || 10;
     const offset = (page - 1) * limit;
 
+    // Today midnight
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const todayStr = new Date().toISOString().split("T")[0];
+
 
     let query = db
       .collection("blood_requests")
       .where("status", "==", "pending")
-      // Valid until the end of donationDate
-      .where("donationDate", ">=", today.toISOString());
+      .where("donationDate", ">=", todayStr);
 
-    // Filter by city (nested address field)
     if (city) {
       query = query.where("address.city", "==", city.toLowerCase());
     }
 
-    // Filter by blood group
     if (bloodGroup) {
       query = query.where("bloodGroup", "==", bloodGroup.toUpperCase());
     }
 
-    // Order by createdAt descending
     query = query.orderBy("createdAt", "desc");
 
     const snapshot = await query.get();
     const allDocs = snapshot.docs;
 
-    // Manual pagination
+    const totalItems = allDocs.length;
+    const totalPages = totalItems === 0 ? 1 : Math.ceil(totalItems / limit);
+
     const paginatedDocs = allDocs.slice(offset, offset + limit);
 
     const requests = paginatedDocs.map((doc) => {
@@ -226,16 +227,17 @@ router.get("/", async (req, res) => {
       };
     });
 
-    const totalPages = Math.ceil(allDocs.length / limit);
     const baseUrl = `${req.protocol}://${req.get("host")}${req.path}`;
 
     res.json({
-      message: "Blood requests fetched successfully",
+      message: totalItems === 0
+        ? "No blood requests found"
+        : "Blood requests fetched successfully",
       result: requests,
       pagination: {
         currentPage: page,
         totalPages,
-        totalItems: allDocs.length,
+        totalItems,
       },
       links: {
         first: `${baseUrl}?page=1&limit=${limit}`,
@@ -244,6 +246,7 @@ router.get("/", async (req, res) => {
         next: page < totalPages ? `${baseUrl}?page=${page + 1}&limit=${limit}` : null,
       },
     });
+
   } catch (error) {
     console.error("🔥 Error in /list:", error);
     res.status(500).json({ message: error.message, result: null });
