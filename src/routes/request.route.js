@@ -124,8 +124,17 @@ router.post("/", authMiddleware, profileComplete, async (req, res) => {
       return words.join(" ");
     };
 
+
     // Make bloodGroup all uppercase
     const bloodGroupUpper = bloodGroup.toUpperCase();
+
+    // Convert + and - to safe words
+    const topicBloodGroup = bloodGroupUpper
+      .replace("+", "positive")
+      .replace("-", "negative");
+
+    // Final topic
+    const topicName = `blood${topicBloodGroup}`;
 
     // Apply transformations
     const formattedNote = capitalizeFirstWord(note);
@@ -141,10 +150,10 @@ router.post("/", authMiddleware, profileComplete, async (req, res) => {
 
     await db.collection("notifications").add(notificationData);
 
-    console.log("🚀 Sending notification to blood group topic:", bloodGroupUpper);
+    console.log("🚀 Sending notification to blood group topic:", topicName);
 
     const response = await admin.messaging().send({
-      topic: `blood_${bloodGroupUpper}`, // 🔥 dynamic topic
+      topic: topicName,
       notification: {
         title: `🩸 ${formattedNote} ${bloodGroupUpper} Needed`,
         body: `${bloodGroupUpper} blood needed at ${hospital}, ${address.city}`,
@@ -221,9 +230,9 @@ router.get("/", async (req, res) => {
         bloodGroup: data.bloodGroup,
         unit: data.unit,
         hospital: data.hospital,
-        contact: data.contact || null,
         note: data.note || null,
         donationDate: data.donationDate,
+        createdAt: data.createdAt,
       };
     });
 

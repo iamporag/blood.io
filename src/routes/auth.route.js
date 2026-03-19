@@ -564,4 +564,37 @@ router.get("/me/bookings/:id", authMiddleware, async (req, res) => {
   }
 });
 
+// ------------------ LOGOUT ------------------
+router.post("/logout", async (req, res) => {
+  try {
+    const { uid } = req.body;
+
+    if (!uid) {
+      return res.status(400).json({
+        message: "User ID is required",
+      });
+    }
+
+    // 1️⃣ Revoke all refresh tokens (force logout all device)
+    await admin.auth().revokeRefreshTokens(uid);
+
+    // 2️⃣ Remove device token (optional but recommended)
+    const userDocRef = db.collection("users").doc(uid);
+    await userDocRef.update({
+      deviceToken: null,
+      updatedAt: new Date().toISOString(),
+    });
+
+    // 3️⃣ Success response
+    res.json({
+      message: "Logout successful",
+    });
+  } catch (error) {
+    console.error("LOGOUT ERROR:", error);
+    res.status(500).json({
+      message: "Logout failed",
+    });
+  }
+});
+
 module.exports = router;

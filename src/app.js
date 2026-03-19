@@ -5,20 +5,28 @@ const authRoute = require("./routes/auth.route");
 const donorRoute = require("./routes/donor.route");
 const requestRoute = require("./routes/request.route");
 const notificationRoute = require("./routes/notification.route");
+const prayerRoute = require("./routes/prayer.route");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
+// ------------------ AUTH ------------------
 app.use("/api/auth", authRoute);
+
+// ------------------ BLOOD DONOR ------------------
 app.use("/api/v1/donor", donorRoute);
 app.use("/api/v1/request", requestRoute);
 app.use("/api/v1/notification", notificationRoute);
 
+// ------------------ PRAYER (no auth) ------------------
+app.use("/api/v1/today-prayer-time", prayerRoute);
 
-app.get("/", (req, res) => {
-  res.send("🩸 Blood API is running");
+// ------------------ HEALTH CHECK ------------------
+app.post("/", (req, res) => {
+  res.send("🩸 Blood & 🕌 Prayer API is running");
 });
 
 module.exports = app;
